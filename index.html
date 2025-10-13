@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MAJESTIC</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(-45deg, #0a0a0a, #1a1a2e, #16213e, #0f3460);
+            background-size: 400% 400%;
+            height: 100vh;
+            animation: gradientShift 15s ease infinite;
+            color: white;
+            overflow: hidden;
+            position: relative;
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            position: relative;
+            z-index: 2;
+        }
+
+        .majestic-title {
+            font-size: 5rem;
+            font-weight: 300;
+            letter-spacing: 1rem;
+            text-transform: uppercase;
+            margin-bottom: 4rem;
+            text-align: center;
+            background: linear-gradient(45deg, #fff, #e0e0e0, #fff, #b0b0b0);
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: titleGlow 8s ease infinite;
+            text-shadow: 0 0 50px rgba(255,255,255,0.1);
+            position: relative;
+        }
+
+        .majestic-title::after {
+            content: '';
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #fff, transparent);
+            animation: linePulse 3s ease-in-out infinite;
+        }
+
+        @keyframes titleGlow {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        @keyframes linePulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+
+        .buttons-container {
+            display: flex;
+            gap: 3rem;
+            position: relative;
+        }
+
+        .majestic-btn {
+            padding: 1.5rem 3rem;
+            font-size: 1.5rem;
+            font-weight: 300;
+            letter-spacing: 0.5rem;
+            text-transform: uppercase;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+            min-width: 200px;
+            text-align: center;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .majestic-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.6s ease;
+        }
+
+        .majestic-btn:hover::before {
+            left: 100%;
+        }
+
+        .majestic-btn:hover {
+            transform: translateY(-5px) scale(1.05);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.4);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .majestic-btn:active {
+            transform: translateY(-2px) scale(1.02);
+        }
+
+        /* Phoenix button specific styles */
+        .phoenix-btn {
+            background: linear-gradient(135deg, rgba(255, 69, 0, 0.1), rgba(255, 140, 0, 0.05));
+            border: 1px solid rgba(255, 140, 0, 0.3);
+        }
+
+        .phoenix-btn:hover {
+            background: linear-gradient(135deg, rgba(255, 69, 0, 0.2), rgba(255, 140, 0, 0.1));
+            border: 1px solid rgba(255, 140, 0, 0.6);
+            text-shadow: 0 0 10px rgba(255, 140, 0, 0.5);
+        }
+
+        /* Houston button specific styles */
+        .houston-btn {
+            background: linear-gradient(135deg, rgba(30, 144, 255, 0.1), rgba(70, 130, 180, 0.05));
+            border: 1px solid rgba(70, 130, 180, 0.3);
+        }
+
+        .houston-btn:hover {
+            background: linear-gradient(135deg, rgba(30, 144, 255, 0.2), rgba(70, 130, 180, 0.1));
+            border: 1px solid rgba(70, 130, 180, 0.6);
+            text-shadow: 0 0 10px rgba(70, 130, 180, 0.5);
+        }
+
+        /* Animated background elements */
+        .bg-element {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.03);
+            animation: float 8s ease-in-out infinite;
+            z-index: 1;
+        }
+
+        @keyframes float {
+            0%, 100% { 
+                transform: translateY(0px) rotate(0deg) scale(1); 
+            }
+            33% { 
+                transform: translateY(-30px) rotate(120deg) scale(1.1); 
+            }
+            66% { 
+                transform: translateY(15px) rotate(240deg) scale(0.9); 
+            }
+        }
+
+        /* Glow effects */
+        .glow {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+            filter: blur(40px);
+            animation: glowMove 10s ease-in-out infinite;
+            z-index: 1;
+        }
+
+        @keyframes glowMove {
+            0%, 100% { 
+                transform: translate(0, 0) scale(1);
+                opacity: 0.5;
+            }
+            25% { 
+                transform: translate(100px, -50px) scale(1.2);
+                opacity: 0.3;
+            }
+            50% { 
+                transform: translate(-80px, 80px) scale(0.8);
+                opacity: 0.7;
+            }
+            75% { 
+                transform: translate(120px, 60px) scale(1.1);
+                opacity: 0.4;
+            }
+        }
+
+        /* Loading animation for link transitions */
+        .link-loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .link-loading.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .majestic-title {
+                font-size: 3rem;
+                letter-spacing: 0.5rem;
+                margin-bottom: 3rem;
+            }
+            
+            .buttons-container {
+                flex-direction: column;
+                gap: 1.5rem;
+            }
+            
+            .majestic-btn {
+                padding: 1.2rem 2.5rem;
+                font-size: 1.2rem;
+                min-width: 180px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .majestic-title {
+                font-size: 2.2rem;
+                letter-spacing: 0.3rem;
+            }
+            
+            .majestic-btn {
+                padding: 1rem 2rem;
+                font-size: 1.1rem;
+                letter-spacing: 0.3rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading overlay -->
+    <div class="link-loading" id="loading">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Animated background elements -->
+    <div class="glow" style="top: 10%; left: 10%;"></div>
+    <div class="glow" style="bottom: 20%; right: 15%; animation-delay: -2s;"></div>
+    <div class="glow" style="top: 50%; left: 80%; animation-delay: -5s;"></div>
+
+    <div class="container">
+        <h1 class="majestic-title">MAJESTIC</h1>
+        
+        <div class="buttons-container">
+            <a href="https://docs.google.com/spreadsheets/d/1fRgEv9E3cBREkhJRfMa3N9jelmWNUKYCAdreKQ97Vlk/edit?gid=1630382591#gid=1630382591" 
+               class="majestic-btn phoenix-btn" 
+               target="_blank"
+               onclick="showLoading()">
+                PHOENIX
+            </a>
+            <a href="https://docs.google.com/spreadsheets/d/1ewb2eCgzmuDvFBdecn05u3WoHXMsuqcLlLtssYV7eng/edit?gid=1630382591#gid=1630382591" 
+               class="majestic-btn houston-btn" 
+               target="_blank"
+               onclick="showLoading()">
+                HOUSTON
+            </a>
+        </div>
+    </div>
+
+    <script>
+        // Create floating background elements
+        function createBackgroundElements() {
+            const body = document.body;
+            const elementsCount = 8;
+            
+            for (let i = 0; i < elementsCount; i++) {
+                const element = document.createElement('div');
+                element.className = 'bg-element';
+                
+                const size = Math.random() * 100 + 50;
+                const left = Math.random() * 100;
+                const top = Math.random() * 100;
+                const delay = Math.random() * 5;
+                const duration = Math.random() * 10 + 8;
+                
+                element.style.width = `${size}px`;
+                element.style.height = `${size}px`;
+                element.style.left = `${left}%`;
+                element.style.top = `${top}%`;
+                element.style.animationDelay = `${delay}s`;
+                element.style.animationDuration = `${duration}s`;
+                
+                body.appendChild(element);
+            }
+        }
+
+        // Show loading animation
+        function showLoading() {
+            const loading = document.getElementById('loading');
+            loading.classList.add('active');
+            
+            // Hide loading after 2 seconds (in case redirect takes too long)
+            setTimeout(() => {
+                loading.classList.remove('active');
+            }, 2000);
+        }
+
+        // Button hover effects
+        function setupButtonEffects() {
+            const buttons = document.querySelectorAll('.majestic-btn');
+            
+            buttons.forEach(btn => {
+                btn.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-5px) scale(1.05)';
+                });
+                
+                btn.addEventListener('mouseleave', function() {
+                    this.style.transform = 'translateY(0px) scale(1)';
+                });
+                
+                btn.addEventListener('mousedown', function() {
+                    this.style.transform = 'translateY(-2px) scale(1.02)';
+                });
+                
+                btn.addEventListener('mouseup', function() {
+                    this.style.transform = 'translateY(-5px) scale(1.05)';
+                });
+            });
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', function(e) {
+            if (e.key === '1' || e.key === 'p') {
+                document.querySelector('.phoenix-btn').click();
+            } else if (e.key === '2' || e.key === 'h') {
+                document.querySelector('.houston-btn').click();
+            }
+        });
+
+        // Initialize
+        createBackgroundElements();
+        setupButtonEffects();
+
+        // Hide loading if user returns to the page
+        window.addEventListener('pageshow', function() {
+            const loading = document.getElementById('loading');
+            loading.classList.remove('active');
+        });
+    </script>
+</body>
+</html>
