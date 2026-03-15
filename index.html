@@ -81,6 +81,8 @@
             display: flex;
             gap: 3rem;
             position: relative;
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         .majestic-btn {
@@ -154,6 +156,18 @@
             background: linear-gradient(135deg, rgba(30, 144, 255, 0.2), rgba(70, 130, 180, 0.1));
             border: 1px solid rgba(70, 130, 180, 0.6);
             text-shadow: 0 0 10px rgba(70, 130, 180, 0.5);
+        }
+
+        /* Orlando button specific styles */
+        .orlando-btn {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 165, 0, 0.05));
+            border: 1px solid rgba(255, 165, 0, 0.3);
+        }
+
+        .orlando-btn:hover {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(255, 165, 0, 0.1));
+            border: 1px solid rgba(255, 165, 0, 0.6);
+            text-shadow: 0 0 10px rgba(255, 165, 0, 0.5);
         }
 
         /* Animated background elements */
@@ -305,6 +319,12 @@
                onclick="showLoading()">
                 Denver
             </a>
+            <a href="https://docs.google.com/spreadsheets/d/1Su45bGeClLplb4y8GTAa7mOGKuj1qhayflsx37NzuAI/edit?gid=441312724#gid=441312724" 
+               class="majestic-btn orlando-btn" 
+               target="_blank"
+               onclick="showLoading()">
+                ORLANDO
+            </a>
         </div>
     </div>
 
@@ -375,6 +395,8 @@
                 document.querySelector('.phoenix-btn').click();
             } else if (e.key === '2' || e.key === 'h') {
                 document.querySelector('.houston-btn').click();
+            } else if (e.key === '3' || e.key === 'o') {
+                document.querySelector('.orlando-btn').click();
             }
         });
 
