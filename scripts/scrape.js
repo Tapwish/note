@@ -6,15 +6,26 @@ const path = require('path');
 const { parseCodex } = require('./parser.js');
 
 // ============================================================
-// КОНФИГУРАЦИЯ СЕРВЕРОВ
+// ГАРАНТИРОВАННОЕ СОЗДАНИЕ ПАПКИ data/ ПРИ ЗАПУСКЕ
+// ============================================================
+const DATA_DIR = path.join(__dirname, '../data');
+try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    console.log('✅ Папка data/ создана (или уже существует)');
+} catch(e) {
+    console.log('⚠️ Не удалось создать папку data/');
+}
+
+// ============================================================
+// КОНФИГУРАЦИЯ СЕРВЕРОВ — ТОЛЬКО ORLANDO
 // ============================================================
 const SERVERS = [
     {
         id: 'orlando',
         name: 'Orlando',
         url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    // ДОБАВЛЯЙ ДРУГИЕ СЕРВЕРЫ СЮДА
+    }
+    // ===== ДЛЯ ДОБАВЛЕНИЯ ДРУГИХ СЕРВЕРОВ РАСКОММЕНТИРУЙ И ЗАМЕНИ ССЫЛКИ =====
     // {
     //     id: 'new_york',
     //     name: 'New York',
@@ -109,7 +120,7 @@ async function scrapeServer(server) {
     console.log(`\n🌐 Обработка сервера: ${server.name} (${server.id})`);
     console.log(`🔗 Раздел с законами: ${server.url}`);
 
-    const serverDir = path.join(__dirname, '../data', server.id);
+    const serverDir = path.join(DATA_DIR, server.id);
     if (!fs.existsSync(serverDir)) {
         fs.mkdirSync(serverDir, { recursive: true });
     }
@@ -182,10 +193,11 @@ async function scrapeAllServers() {
         }
     }
 
-    // СОЗДАЁМ .last-run.json ДАЖЕ ЕСЛИ НИЧЕГО НЕ НАШЛИ
-    const lastRunFile = path.join(__dirname, '../data', '.last-run.json');
+    // ============================================================
+    // ГАРАНТИРОВАННОЕ СОЗДАНИЕ .last-run.json
+    // ============================================================
+    const lastRunFile = path.join(DATA_DIR, '.last-run.json');
     try {
-        fs.mkdirSync(path.dirname(lastRunFile), { recursive: true });
         fs.writeFileSync(lastRunFile, JSON.stringify({
             lastRun: new Date().toISOString(),
             servers: Object.keys(results).map(id => ({
@@ -195,10 +207,20 @@ async function scrapeAllServers() {
         }, null, 2));
         console.log(`✅ .last-run.json создан`);
     } catch(e) {
-        console.log('⚠️ Не удалось создать .last-run.json');
+        console.log('⚠️ Не удалось создать .last-run.json:', e.message);
+        // СОЗДАЁМ МИНИМАЛЬНЫЙ ФАЙЛ, ЧТОБЫ GIT НЕ ПАДАЛ
+        try {
+            fs.writeFileSync(lastRunFile, JSON.stringify({ lastRun: new Date().toISOString() }));
+            console.log('✅ .last-run.json создан (минимальная версия)');
+        } catch(e2) {
+            console.log('❌ Критическая ошибка: не удалось создать .last-run.json');
+        }
     }
 
-    const reportPath = path.join(__dirname, '../data', 'report.json');
+    // ============================================================
+    // ОТЧЁТ
+    // ============================================================
+    const reportPath = path.join(DATA_DIR, 'report.json');
     const report = {
         timestamp: new Date().toISOString(),
         servers: Object.keys(results).map(id => ({
@@ -207,8 +229,12 @@ async function scrapeAllServers() {
             details: results[id]
         }))
     };
-    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-    console.log(`\n📊 Отчёт сохранён в ${reportPath}`);
+    try {
+        fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+        console.log(`\n📊 Отчёт сохранён в ${reportPath}`);
+    } catch(e) {
+        console.log('⚠️ Не удалось сохранить отчёт');
+    }
 
     return results;
 }
