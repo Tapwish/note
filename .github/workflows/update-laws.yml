@@ -3,7 +3,7 @@ name: Update Laws
 on:
   schedule:
     - cron: '0 */6 * * *'  # каждые 6 часов
-  workflow_dispatch:       # можно запустить вручную
+  workflow_dispatch:       # ручной запуск
 
 permissions:
   contents: write
@@ -16,7 +16,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # забираем всю историю, включая теги
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -34,13 +34,10 @@ jobs:
           git config user.name "law-bot"
           git config user.email "law-bot@users.noreply.github.com"
           
-          # Стягиваем последние изменения с удалённого репозитория
           git pull --rebase origin main
           
-          # Добавляем изменения
           git add uk.json pk.json ak.json dk.json
           
-          # Проверяем, есть ли изменения
           if git diff --staged --quiet; then
             echo "📭 Нет изменений для коммита"
           else
