@@ -2,16 +2,11 @@ name: Update Laws
 
 on:
   schedule:
-    # Раз в 3 дня в 03:00 UTC. Формат cron: минута час день(месяца) месяц день(недели)
-    # "*/3" в поле дня месяца означает "каждый 3-й день месяца" - это НЕ то же самое,
-    # что "раз в 3 дня" (интервалы дня месяца не переносятся между месяцами).
-    # Если нужна точная периодичность "каждые 3 дня" - проще ставить ежедневный
-    # cron и внутри скрипта проверять дату последнего обновления (см. scrape.js).
-    - cron: '0 3 * * *'
-  workflow_dispatch: {}   # позволяет запустить вручную кнопкой "Run workflow"
+    - cron: '0 3 */3 * *'
+  workflow_dispatch: {}
 
 permissions:
-  contents: write         # обязательно, иначе бот не сможет запушить изменения
+  contents: write
 
 jobs:
   update-laws:
@@ -37,7 +32,7 @@ jobs:
         run: |
           git config user.name "law-bot"
           git config user.email "law-bot@users.noreply.github.com"
-          git add data/*.json data/.last-run.json
+          git add data/
           if git diff --cached --quiet; then
             echo "Изменений нет, коммит не нужен"
           else
