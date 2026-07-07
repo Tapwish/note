@@ -4,7 +4,7 @@
  * Единый парсер для ВСЕХ кодексов (УК, ПК, АК, ДК)
  *
  * Вход: сырой текст с форума (XenForo)
- * Выход: единая структура { number, tag, stars, title, parts: [{ part, text, punishment }] }
+ * Выход: единая структура { number, tag, stars, title, parts: [{ part, stars, text, punishment }] }
  */
 
 const fs = require('fs');
@@ -12,12 +12,61 @@ const path = require('path');
 
 // ========== РЕГУЛЯРНЫЕ ВЫРАЖЕНИЯ ==========
 
-// Группы: 1 - номер статьи, 2 - звёзды сложности (★★★★), 3 - тег в скобках, 4 - остальной текст строки
-const ARTICLE_RE = /^Статья\s+(\d+(?:\.\d+)*)\.?\s*(★+)?\s*(?:\[([^\]]+)\])?\s*(.*)$/i;
+// Номер статьи + всё, что идёт после него на той же строке (разбирается отдельно ниже)
+const ARTICLE_RE = /^Статья\s+(\d+(?:\.\d+)*)\.?\s*(.*)$/i;
 const PART_RE = /^ч\.?\s*(\d+)\s*[.)]?\s*(.*)$/i;
-const PUNISHMENT_RE = /(?:Наказание|★★|Штраф)\s*[:\s]+([^\n]*)$/i;
+const PUNISHMENT_RE = /(?:Наказание|Штраф)\s*[:\s]+([^\n]*)$/i;
 const HEADER_RE = /^[Гг]лава\s+[\dIVXLCDM]+[\.\s]/i;
 const INLINE_PUNISHMENT_RE = /Наказание[:\s]+([^\n]*)$/i;
+
+// ========== РАЗБОР "ШАПКИ" СТАТЬИ (звёзды сложности + тег) ==========
+
+/**
+ * Отделяет маркер сложности (★, ★★★★, "★★ / ★★★", "от ★ до ★★★★★", "- ★★★ / ★★★★")
+ * от начала строки, если он там есть.
+ */
+function splitLeadingStars(text) {
+  let s = text;
+
+  // Необязательный дефис-разделитель перед звёздами: "- ★★★ / ★★★★..."
+  const dashMatch = s.match(/^[-–]\s*/);
+  if (dashMatch) {
+    const after = s.slice(dashMatch[0].length);
+    if (/^(от\s+)?★/i.test(after)) {
+      s = after;
+    }
+  }
+
+  // Захватываем блок из звёзд/пробелов/слэшей/дефисов/слова "до" (для диапазонов "от ★ до ★★★★★"),
+  // начинающийся со звезды (с необязательным "от " перед ней)
+  const starMatch = s.match(/^((?:от\s+)?★(?:[★\s/–-]|до\s*)*)/i);
+  if (starMatch && /★/.test(starMatch[1])) {
+    const stars = starMatch[1].trim().replace(/\s+/g, ' ');
+    const rest = s.slice(starMatch[0].length);
+    return { stars, rest };
+  }
+
+  return { stars: null, rest: text };
+}
+
+/**
+ * Отделяет тег в квадратных [Федеральная] ИЛИ круглых (ФЕДЕРАЛЬНЫЙ) скобках.
+ */
+function splitLeadingTag(text) {
+  const s = text.replace(/^\s+/, '');
+
+  const bracketMatch = s.match(/^\[([^\]]+)\]\s*/);
+  if (bracketMatch) {
+    return { tag: cleanText(bracketMatch[1]), rest: s.slice(bracketMatch[0].length) };
+  }
+
+  const parenMatch = s.match(/^\(([^)]+)\)\s*/);
+  if (parenMatch) {
+    return { tag: cleanText(parenMatch[1]), rest: s.slice(parenMatch[0].length) };
+  }
+
+  return { tag: null, rest: s };
+}
 
 // ========== ОСНОВНАЯ ФУНКЦИЯ ==========
 
@@ -64,23 +113,27 @@ function parserCodex(rawText) {
 
         currentArticle.parts.push({
           part: 1,
+          stars: null,
           text: text || bodyText,
           punishment: punishment
         });
       }
 
+      // Если у статьи есть "общее" наказание (объявленное один раз, до перечисления ч.1/ч.2/...),
+      // применяем его КО ВСЕМ частям, у которых своего наказания нет — а не только к последней.
       if (currentArticle._punishment && currentArticle.parts.length > 0) {
-        const lastPart = currentArticle.parts[currentArticle.parts.length - 1];
-        if (!lastPart.punishment) {
-          lastPart.punishment = cleanText(currentArticle._punishment);
-        } else if (lastPart.punishment !== cleanText(currentArticle._punishment)) {
-          lastPart.punishment = cleanText(`${lastPart.punishment}. ${currentArticle._punishment}`);
+        const blanket = cleanText(currentArticle._punishment);
+        for (const p of currentArticle.parts) {
+          if (!p.punishment) {
+            p.punishment = blanket;
+          }
         }
       }
 
       if (currentArticle.parts.length === 0) {
         currentArticle.parts.push({
           part: 1,
+          stars: null,
           text: currentArticle.title || 'Нет текста',
           punishment: currentArticle._punishment ? cleanText(currentArticle._punishment) : null
         });
@@ -111,10 +164,12 @@ function parserCodex(rawText) {
 
       currentPart = null;
 
-      // Текст после номера/звёзд/тега может содержать всё сразу:
-      // короткий заголовок ИЛИ полный текст статьи с "Наказание: ..." в конце.
-      // Проверяем и отделяем наказание сразу, чтобы оно не осело в title.
-      let restText = cleanText(articleMatch[4] || '');
+      let remainder = articleMatch[2] || '';
+
+      const starsResult = splitLeadingStars(remainder);
+      const tagResult = splitLeadingTag(starsResult.rest);
+
+      let restText = cleanText(tagResult.rest);
       let inlinePunishment = null;
       const inlineMatchOnHeader = restText.match(INLINE_PUNISHMENT_RE);
       if (inlineMatchOnHeader) {
@@ -124,8 +179,8 @@ function parserCodex(rawText) {
 
       currentArticle = {
         number: articleMatch[1],
-        stars: articleMatch[2] ? articleMatch[2].length : null,
-        tag: articleMatch[3] ? cleanText(articleMatch[3]) : null,
+        stars: starsResult.stars,
+        tag: tagResult.tag,
         title: restText,
         parts: [],
         _body: [],
@@ -140,7 +195,11 @@ function parserCodex(rawText) {
     if (partMatch) {
       finalizePart();
 
-      const partText = partMatch[2] || '';
+      let partText = partMatch[2] || '';
+
+      const partStars = splitLeadingStars(partText);
+      partText = partStars.rest;
+
       const punishmentMatch = partText.match(INLINE_PUNISHMENT_RE);
       let text = partText;
       let punishment = null;
@@ -152,6 +211,7 @@ function parserCodex(rawText) {
 
       currentPart = {
         part: parseInt(partMatch[1], 10),
+        stars: partStars.stars,
         text: [text || ''],
         punishment: punishment || null
       };
@@ -316,4 +376,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parserCodex, cleanText, saveToJson, fetchForumPage };
+module.exports = { parserCodex, splitLeadingStars, splitLeadingTag, cleanText, saveToJson, fetchForumPage };
