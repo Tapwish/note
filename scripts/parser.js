@@ -251,9 +251,11 @@ function saveToJson(articles, codexType, title, url) {
     totalArticles: articles.length
   };
 
-  const filename = `${codexType}.json`;
+  // Сохраняем в корень репозитория (на уровень выше scripts/),
+  // чтобы workflow мог найти uk.json/pk.json/ak.json/dk.json через "git add".
+  const filename = path.join(__dirname, '..', `${codexType}.json`);
   fs.writeFileSync(filename, JSON.stringify(result, null, 2));
-  console.log(`✅ ${filename} — ${articles.length} статей`);
+  console.log(`✅ ${codexType}.json — ${articles.length} статей`);
   return result;
 }
 
@@ -261,7 +263,15 @@ function saveToJson(articles, codexType, title, url) {
 
 async function fetchForumPage(url) {
   const puppeteer = require('puppeteer');
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu'
+    ]
+  });
   const page = await browser.newPage();
 
   console.log(`📥 Загрузка: ${url}`);
@@ -299,6 +309,8 @@ async function main() {
     dk: 'Дорожный кодекс штата San-Andreas'
   };
 
+  let hadError = false;
+
   for (const [type, url] of Object.entries(urls)) {
     try {
       // 1. Загружаем страницу
@@ -311,16 +323,26 @@ async function main() {
       saveToJson(articles, type, titles[type], url);
 
     } catch (error) {
+      hadError = true;
       console.error(`❌ Ошибка для ${type}:`, error.message);
     }
   }
 
   console.log('✅ Готово!');
+
+  // Если хотя бы один кодекс не спарсился — завершаем процесс с ошибкой,
+  // чтобы workflow не пытался закоммитить пустые/неполные данные молча.
+  if (hadError) {
+    process.exitCode = 1;
+  }
 }
 
 // Если запускаем напрямую
 if (require.main === module) {
-  main().catch(console.error);
+  main().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
 }
 
 module.exports = { parserCodex, cleanText, saveToJson, fetchForumPage };
