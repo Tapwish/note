@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-07-07T17:04:10.415Z",
+  "servers": [
+    {
+      "id": "orlando",
+      "status": "success",
+      "details": {
+        "uk": {
+          "success": true,
+          "articles": 155
+        },
+        "ak": {
+          "success": true,
+          "articles": 79
+        },
+        "pk": {
+          "success": true,
+          "articles": 91
+        },
+        "dk": {
+          "success": true,
+          "articles": 61
+        }
+      }
+    }
+  ]
+}
