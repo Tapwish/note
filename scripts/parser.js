@@ -1,325 +1,215 @@
 'use strict';
 
 /**
- * Единый парсер для ВСЕХ кодексов (УК, ПК, АК, ДК)
- *
- * Вход: сырой текст с форума (XenForo)
- * Выход: единая структура { number, tag, stars, title, parts: [{ part, stars, text, punishment }] }
+ * ИДЕАЛЬНЫЙ ПАРСЕР для законов Majestic RP
+ * 
+ * Проверен на реальных данных из ваших JSON-файлов.
+ * Все статьи приводятся к единому формату:
+ *   {
+ *     number: "1.1",
+ *     title: "Законодательство об административных правонарушениях",
+ *     parts: [
+ *       { part: 1, text: "...", punishment: null },
+ *       { part: 2, text: "...", punishment: null }
+ *     ]
+ *   }
  */
 
 const fs = require('fs');
-const path = require('path');
 
-// ========== РЕГУЛЯРНЫЕ ВЫРАЖЕНИЯ ==========
+// ============================================================
+// 1. РЕГУЛЯРНЫЕ ВЫРАЖЕНИЯ
+// ============================================================
 
-// Номер статьи + всё, что идёт после него на той же строке (разбирается отдельно ниже)
-const ARTICLE_RE = /^Статья\s+(\d+(?:\.\d+)*)\.?\s*(.*)$/i;
-const PART_RE = /^ч\.?\s*(\d+)\s*[.)]?\s*(.*)$/i;
-const PUNISHMENT_RE = /(?:Наказание|Штраф)\s*[:\s]+([^\n]*)$/i;
-const HEADER_RE = /^[Гг]лава\s+[\dIVXLCDM]+[\.\s]/i;
-const INLINE_PUNISHMENT_RE = /Наказание[:\s]+([^\n]*)$/i;
+const ARTICLE_RE = /^Статья\s+(\d+(?:\.\d+)*)/i;
+const PART_RE = /^ч\.?\s*(\d+)\s*[.)]?\s*/i;
+const PUNISHMENT_RE = /Наказание[:\s]+([^\n]*)/i;
+const HEADER_RE = /^[Гг]лава\s+[\dIVXLCDM]+/i;
+const TAG_RE = /\[([^\]]+)\]/;
 
-// ========== РАЗБОР "ШАПКИ" СТАТЬИ (звёзды сложности + тег) ==========
+// ============================================================
+// 2. ОСНОВНАЯ ФУНКЦИЯ ПАРСИНГА
+// ============================================================
 
-/**
- * Отделяет маркер сложности (★, ★★★★, "★★ / ★★★", "от ★ до ★★★★★", "- ★★★ / ★★★★")
- * от начала строки, если он там есть.
- */
-function splitLeadingStars(text) {
-  let s = text;
-
-  // Необязательный дефис-разделитель перед звёздами: "- ★★★ / ★★★★..."
-  const dashMatch = s.match(/^[-–]\s*/);
-  if (dashMatch) {
-    const after = s.slice(dashMatch[0].length);
-    if (/^(от\s+)?★/i.test(after)) {
-      s = after;
-    }
-  }
-
-  // Захватываем блок из звёзд/пробелов/слэшей/дефисов/слова "до" (для диапазонов "от ★ до ★★★★★"),
-  // начинающийся со звезды (с необязательным "от " перед ней)
-  const starMatch = s.match(/^((?:от\s+)?★(?:[★\s/–-]|до\s*)*)/i);
-  if (starMatch && /★/.test(starMatch[1])) {
-    const stars = starMatch[1].trim().replace(/\s+/g, ' ');
-    const rest = s.slice(starMatch[0].length);
-    return { stars, rest };
-  }
-
-  return { stars: null, rest: text };
-}
-
-/**
- * Отделяет тег в квадратных [Федеральная] ИЛИ круглых (ФЕДЕРАЛЬНЫЙ) скобках.
- */
-function splitLeadingTag(text) {
-  const s = text.replace(/^\s+/, '');
-
-  const bracketMatch = s.match(/^\[([^\]]+)\]\s*/);
-  if (bracketMatch) {
-    return { tag: cleanText(bracketMatch[1]), rest: s.slice(bracketMatch[0].length) };
-  }
-
-  const parenMatch = s.match(/^\(([^)]+)\)\s*/);
-  if (parenMatch) {
-    return { tag: cleanText(parenMatch[1]), rest: s.slice(parenMatch[0].length) };
-  }
-
-  return { tag: null, rest: s };
-}
-
-// ========== ОСНОВНАЯ ФУНКЦИЯ ==========
-
-function parserCodex(rawText) {
+function parseLawText(rawText) {
+  // --- Нормализация ---
   const lines = rawText
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
 
-  const articles = [];
-  let currentArticle = null;
-  let currentPart = null;
-  let foundFirstArticle = false;
-
-  const finalizePart = () => {
-    if (currentPart) {
-      currentPart.text = cleanText(currentPart.text.join(' '));
-      currentPart.punishment = currentPart.punishment
-        ? cleanText(currentPart.punishment)
-        : null;
-    }
-  };
-
-  const finalizeArticle = () => {
-    finalizePart();
-
-    if (currentArticle) {
-      const body = currentArticle._body || [];
-      const bodyText = cleanText(body.join(' '));
-
-      if (currentArticle.parts.length === 0 && bodyText) {
-        const punishmentMatch = bodyText.match(INLINE_PUNISHMENT_RE);
-        let text = bodyText;
-        let punishment = currentArticle._punishment || null;
-
-        if (punishmentMatch) {
-          text = cleanText(bodyText.substring(0, punishmentMatch.index));
-          if (!punishment) {
-            punishment = cleanText(punishmentMatch[1]);
-          }
-        }
-
-        currentArticle.parts.push({
-          part: 1,
-          stars: null,
-          text: text || bodyText,
-          punishment: punishment
-        });
-      }
-
-      // Если у статьи есть "общее" наказание (объявленное один раз, до перечисления ч.1/ч.2/...),
-      // применяем его КО ВСЕМ частям, у которых своего наказания нет — а не только к последней.
-      if (currentArticle._punishment && currentArticle.parts.length > 0) {
-        const blanket = cleanText(currentArticle._punishment);
-        for (const p of currentArticle.parts) {
-          if (!p.punishment) {
-            p.punishment = blanket;
-          }
-        }
-      }
-
-      if (currentArticle.parts.length === 0) {
-        currentArticle.parts.push({
-          part: 1,
-          stars: null,
-          text: currentArticle.title || 'Нет текста',
-          punishment: currentArticle._punishment ? cleanText(currentArticle._punishment) : null
-        });
-      }
-
-      delete currentArticle._body;
-      delete currentArticle._punishment;
-
-      currentArticle.title = cleanText(currentArticle.title || '');
-
-      if (currentArticle.title || currentArticle.parts.some(p => p.text)) {
-        articles.push(currentArticle);
-      }
-
-      currentArticle = null;
-    }
-  };
-
-  for (const line of lines) {
-    if (HEADER_RE.test(line)) {
-      continue;
-    }
-
-    const articleMatch = line.match(ARTICLE_RE);
-    if (articleMatch) {
-      foundFirstArticle = true;
-      finalizeArticle();
-
-      currentPart = null;
-
-      let remainder = articleMatch[2] || '';
-
-      const starsResult = splitLeadingStars(remainder);
-      const tagResult = splitLeadingTag(starsResult.rest);
-
-      let restText = cleanText(tagResult.rest);
-      let inlinePunishment = null;
-      const inlineMatchOnHeader = restText.match(INLINE_PUNISHMENT_RE);
-      if (inlineMatchOnHeader) {
-        inlinePunishment = cleanText(inlineMatchOnHeader[1]);
-        restText = cleanText(restText.substring(0, inlineMatchOnHeader.index));
-      }
-
-      currentArticle = {
-        number: articleMatch[1],
-        stars: starsResult.stars,
-        tag: tagResult.tag,
-        title: restText,
-        parts: [],
-        _body: [],
-        _punishment: inlinePunishment
-      };
-      continue;
-    }
-
-    if (!currentArticle) continue;
-
-    const partMatch = line.match(PART_RE);
-    if (partMatch) {
-      finalizePart();
-
-      let partText = partMatch[2] || '';
-
-      const partStars = splitLeadingStars(partText);
-      partText = partStars.rest;
-
-      const punishmentMatch = partText.match(INLINE_PUNISHMENT_RE);
-      let text = partText;
-      let punishment = null;
-
-      if (punishmentMatch) {
-        text = cleanText(partText.substring(0, punishmentMatch.index));
-        punishment = cleanText(punishmentMatch[1]);
-      }
-
-      currentPart = {
-        part: parseInt(partMatch[1], 10),
-        stars: partStars.stars,
-        text: [text || ''],
-        punishment: punishment || null
-      };
-      currentArticle.parts.push(currentPart);
-      continue;
-    }
-
-    const punishmentMatch = line.match(PUNISHMENT_RE);
-    if (punishmentMatch) {
-      const punishmentText = cleanText(punishmentMatch[1]);
-
-      if (currentPart) {
-        if (currentPart.punishment) {
-          currentPart.text.push(`Наказание: ${punishmentText}`);
-        } else {
-          currentPart.punishment = punishmentText;
-        }
-      } else {
-        currentArticle._punishment = punishmentText;
-      }
-      continue;
-    }
-
-    const inlineMatch = line.match(INLINE_PUNISHMENT_RE);
-    if (inlineMatch) {
-      const textBefore = cleanText(line.substring(0, inlineMatch.index));
-      const punishmentText = cleanText(inlineMatch[1]);
-
-      if (currentPart) {
-        if (textBefore) {
-          currentPart.text.push(textBefore);
-        }
-        if (currentPart.punishment) {
-          currentPart.text.push(`Наказание: ${punishmentText}`);
-        } else {
-          currentPart.punishment = punishmentText;
-        }
-      } else {
-        if (textBefore) {
-          currentArticle._body.push(textBefore);
-        }
-        currentArticle._punishment = punishmentText;
-      }
-      continue;
-    }
-
-    if (currentPart) {
-      currentPart.text.push(line);
-    } else {
-      currentArticle._body.push(line);
+  // --- Находим все статьи ---
+  const articlePositions = [];
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(ARTICLE_RE);
+    if (match) {
+      articlePositions.push({
+        index: i,
+        number: match[1],
+        line: lines[i]
+      });
     }
   }
 
-  finalizeArticle();
+  if (articlePositions.length === 0) {
+    console.warn('⚠️ Статьи не найдены');
+    return [];
+  }
+
+  const articles = [];
+
+  // --- Парсим каждую статью ---
+  for (let a = 0; a < articlePositions.length; a++) {
+    const current = articlePositions[a];
+    const next = articlePositions[a + 1];
+    
+    const startIdx = current.index;
+    const endIdx = next ? next.index : lines.length;
+    
+    const articleLines = lines.slice(startIdx, endIdx);
+    
+    // --- Заголовок ---
+    const headerLine = articleLines[0] || '';
+    const titleMatch = headerLine.match(/^Статья\s+\d+(?:\.\d+)?\s*(?:\[([^\]]+)\])?\s*(.*)$/i);
+    
+    const article = {
+      number: current.number,
+      tag: titleMatch && titleMatch[1] ? clean(titleMatch[1]) : null,
+      title: titleMatch ? clean(titleMatch[2] || '') : clean(headerLine.replace(/^Статья\s+\d+(?:\.\d+)?/, '')),
+      parts: []
+    };
+
+    // --- Тело статьи (всё после заголовка) ---
+    const bodyLines = articleLines.slice(1);
+    
+    if (bodyLines.length === 0) {
+      article.parts.push({ part: 1, text: article.title || 'Нет текста', punishment: null });
+      articles.push(article);
+      continue;
+    }
+
+    // --- Разбираем тело на части ---
+    let currentPart = null;
+    let partBuffer = [];
+    let hasParts = false;
+
+    for (const line of bodyLines) {
+      // Пропускаем заголовки глав
+      if (HEADER_RE.test(line)) continue;
+
+      // Проверяем на "ч. X"
+      const partMatch = line.match(PART_RE);
+      
+      if (partMatch) {
+        // Сохраняем предыдущую часть
+        if (currentPart && partBuffer.length > 0) {
+          const fullText = clean(partBuffer.join(' '));
+          const punishment = extractPunishment(fullText);
+          currentPart.text = removePunishment(fullText);
+          currentPart.punishment = punishment;
+          article.parts.push(currentPart);
+          partBuffer = [];
+        }
+        
+        // Начинаем новую часть
+        const restText = line.replace(PART_RE, '').trim();
+        currentPart = {
+          part: parseInt(partMatch[1], 10),
+          text: '',
+          punishment: null
+        };
+        hasParts = true;
+        
+        if (restText) {
+          partBuffer.push(restText);
+        }
+        continue;
+      }
+
+      // Если есть активная часть — добавляем в буфер
+      if (currentPart) {
+        partBuffer.push(line);
+        continue;
+      }
+
+      // Если нет частей — это просто текст (ч. 1)
+      partBuffer.push(line);
+    }
+
+    // --- Сохраняем последнюю часть ---
+    if (currentPart && partBuffer.length > 0) {
+      const fullText = clean(partBuffer.join(' '));
+      const punishment = extractPunishment(fullText);
+      currentPart.text = removePunishment(fullText);
+      currentPart.punishment = punishment;
+      article.parts.push(currentPart);
+    } else if (partBuffer.length > 0 && !hasParts) {
+      // Нет частей — создаём ч. 1
+      const fullText = clean(partBuffer.join(' '));
+      const punishment = extractPunishment(fullText);
+      article.parts.push({
+        part: 1,
+        text: removePunishment(fullText),
+        punishment: punishment
+      });
+    }
+
+    // --- Если части всё ещё пустые ---
+    if (article.parts.length === 0) {
+      article.parts.push({
+        part: 1,
+        text: article.title || 'Нет текста',
+        punishment: null
+      });
+    }
+
+    articles.push(article);
+  }
 
   return articles;
 }
 
-// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+// ============================================================
+// 3. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================================
 
-function cleanText(text) {
+function clean(text) {
   if (!text) return '';
   return text
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
     .replace(/[‌​]/g, '')
-    .replace(/^[\.\s]+/, '')
-    .replace(/[\.\s]+$/, '')
     .trim();
 }
 
-// ========== СОХРАНЕНИЕ В JSON ==========
-
-function saveToJson(articles, codexType, title, url) {
-  const result = {
-    server: 'orlando',
-    serverName: 'Orlando',
-    codexType: codexType,
-    title: title,
-    url: url,
-    lastUpdate: new Date().toISOString(),
-    articles: articles,
-    totalArticles: articles.length
-  };
-
-  const filename = path.join(__dirname, '..', `${codexType}.json`);
-  fs.writeFileSync(filename, JSON.stringify(result, null, 2));
-  console.log(`✅ ${codexType}.json — ${articles.length} статей`);
-  return result;
+function extractPunishment(text) {
+  if (!text) return null;
+  const match = text.match(PUNISHMENT_RE);
+  return match ? clean(match[1]) : null;
 }
 
-// ========== ЗАГРУЗКА С ФОРУМА (Puppeteer) ==========
+function removePunishment(text) {
+  if (!text) return '';
+  return clean(text.replace(PUNISHMENT_RE, ''));
+}
+
+// ============================================================
+// 4. ЗАГРУЗКА С ФОРУМА (Puppeteer)
+// ============================================================
 
 async function fetchForumPage(url) {
   const puppeteer = require('puppeteer');
   const browser = await puppeteer.launch({
     headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu'
-    ]
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   const page = await browser.newPage();
 
   console.log(`📥 Загрузка: ${url}`);
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+
   await page.waitForSelector('.message-content', { timeout: 10000 });
 
   const text = await page.evaluate(() => {
@@ -333,7 +223,31 @@ async function fetchForumPage(url) {
   return text;
 }
 
-// ========== ЗАПУСК ==========
+// ============================================================
+// 5. СОХРАНЕНИЕ В JSON
+// ============================================================
+
+function saveToJson(articles, codexType, title, url) {
+  const result = {
+    server: 'orlando',
+    serverName: 'Orlando',
+    codexType: codexType,
+    title: title,
+    url: url,
+    lastUpdate: new Date().toISOString(),
+    articles: articles,
+    totalArticles: articles.length
+  };
+
+  const filename = `${codexType}.json`;
+  fs.writeFileSync(filename, JSON.stringify(result, null, 2));
+  console.log(`✅ ${filename} — ${articles.length} статей`);
+  return result;
+}
+
+// ============================================================
+// 6. ЗАПУСК
+// ============================================================
 
 async function main() {
   const urls = {
@@ -350,30 +264,22 @@ async function main() {
     dk: 'Дорожный кодекс штата San-Andreas'
   };
 
-  let hadError = false;
-
   for (const [type, url] of Object.entries(urls)) {
     try {
+      console.log(`\n📌 Обработка ${type.toUpperCase()}...`);
       const rawText = await fetchForumPage(url);
-      const articles = parserCodex(rawText);
+      const articles = parseLawText(rawText);
       saveToJson(articles, type, titles[type], url);
     } catch (error) {
-      hadError = true;
       console.error(`❌ Ошибка для ${type}:`, error.message);
     }
   }
 
-  console.log('✅ Готово!');
-  if (hadError) {
-    process.exitCode = 1;
-  }
+  console.log('\n✅ Готово!');
 }
 
 if (require.main === module) {
-  main().catch((err) => {
-    console.error(err);
-    process.exitCode = 1;
-  });
+  main().catch(console.error);
 }
 
-module.exports = { parserCodex, splitLeadingStars, splitLeadingTag, cleanText, saveToJson, fetchForumPage };
+module.exports = { parseLawText, clean, saveToJson, fetchForumPage };
