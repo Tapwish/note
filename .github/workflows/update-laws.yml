@@ -1,5 +1,4 @@
 name: Update Laws
-
 on:
   schedule:
     - cron: '0 */6 * * *'
@@ -8,10 +7,13 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: update-laws
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,16 +36,30 @@ jobs:
         run: |
           git config user.name "law-bot"
           git config user.email "law-bot@users.noreply.github.com"
-          
-          git pull --rebase origin main
-          
+
           git add uk.json pk.json ak.json dk.json
-          
+
           if git diff --staged --quiet; then
             echo "📭 Нет изменений"
-          else
-            git commit -m "chore: автообновление законов $(date '+%Y-%m-%d %H:%M')"
-            git push origin main
+            exit 0
+          fi
+
+          git commit -m "chore: автообновление законов $(date '+%Y-%m-%d %H:%M')"
+
+          success=false
+          for i in 1 2 3 4 5; do
+            echo "Попытка push #$i"
+            if git pull --rebase origin main && git push origin main; then
+              success=true
+              break
+            fi
+            echo "Push не удался, ждём и пробуем снова..."
+            sleep 5
+          done
+
+          if [ "$success" = false ]; then
+            echo "❌ Не удалось запушить после нескольких попыток"
+            exit 1
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
