@@ -155,6 +155,11 @@ function flatten(articles) {
         number: part.part != null ? `${art.number}.${part.part}` : art.number,
         articleNumber: art.number,
         part: part.part,
+        // part.part === null значит, что в исходном тексте явной "ч. N"
+        // не было (формат B). Для отображения в приложении такие статьи
+        // всё равно должны показываться как "ч1" — поэтому partLabel
+        // всегда числовой (реальный номер части, либо 1 по умолчанию).
+        partLabel: part.part != null ? part.part : 1,
         tag: art.tag,
         title: art.title,
         text: part.text,
@@ -188,7 +193,9 @@ function renderText(entries) {
     .map((e) => {
       const tag = e.tag ? ` [${e.tag}]` : '';
       const header = `Статья ${e.number}${tag}. ${shortTitle(e)}`;
-      const body = e.text;
+      // partLabel всегда есть (даже у статей без явных "ч. N" в исходнике,
+      // см. flatten()) — поэтому "чN" пишется перед текстом всегда.
+      const body = `ч${e.partLabel} ${e.text}`;
       const punishment = `Наказание: ${e.punishment || '—'}`;
       return `${header}\n${body}\n${punishment}`;
     })
