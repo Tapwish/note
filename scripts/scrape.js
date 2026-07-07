@@ -1,123 +1,105 @@
-const fs = require('fs');
-const path = require('path');
+'use strict';
+
 const puppeteer = require('puppeteer');
-const { parseCodexText } = require('./parser');
 
-// ==== НАСТРОЙКА: впишите сюда реальные ссылки на треды каждого кодекса ====
-// articleMode:
-//   'statya'   - статьи оформлены как "Статья 1.1. Название" (УК/ПК/АК)
-//   'numbered' - статьи идут просто пронумерованным списком без слова
-//                "Статья", например "12. Текст статьи..." (ДК)
-const CODICES = [
-    {
-        tab: 'uk',
-        name: 'Уголовный кодекс штата San-Andreas',
-        url: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
-        outFile: 'data/uk.json',
-        articleMode: 'statya'
-    },
-    {
-        tab: 'ak',
-        name: 'Административный кодекс штата San-Andreas',
-        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-АК/',
-        outFile: 'data/ak.json',
-        articleMode: 'statya'
-    },
-    {
-        tab: 'pk',
-        name: 'Процессуальный кодекс штата San-Andreas',
-        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ПК/',
-        outFile: 'data/pk.json',
-        articleMode: 'statya'
-    },
-    {
-        tab: 'dk',
-        name: 'Дорожный кодекс штата San-Andreas',
-        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ДК/',
-        outFile: 'data/dk.json',
-        articleMode: 'numbered'
-    }
-];
+/**
+ * Скрапит тему форума XenForo (Majestic RP) и возвращает массив постов:
+ *   [{ page: 1, postId: 'post-12345', author: 'Nick', text: '...' }, ...]
+ *
+ * Особенности XenForo, которые учитываются:
+ *  - контент поста лежит в article.message .message-body .bbWrapper
+ *  - внутри может быть цитата (blockquote.bbCodeBlock--quote / .quoteContainer) —
+ *    её мы вырезаем перед извлечением текста, чтобы не дублировать статьи,
+ *    процитированные в чужом посте
+ *  - спойлеры (.bbCodeSpoiler) обычно тоже статьи кодекса — их НЕ вырезаем,
+ *    но раскрываем клики не требуются: innerText спойлера доступен в DOM и без клика
+ *  - пагинация: ссылка последней страницы в .pageNav-main .pageNav-page:last-child a
+ *
+ * @param {string} threadUrl
+ * @param {object} [opts]
+ * @param {boolean} [opts.headless=true]
+ * @param {number} [opts.maxPages] - ограничить число страниц (для теста)
+ * @returns {Promise<Array<{page:number, postId:string, author:string, text:string}>>}
+ */
+async function scrapeThread(threadUrl, opts = {}) {
+  const { headless = true, maxPages } = opts;
 
-// Селектор первого поста в теме на XenForo. Если верстка форума другая -
-// поменяйте здесь (см. инструкцию в README-automation.md, как его найти).
-const FIRST_POST_SELECTOR = '.message-body .bbWrapper';
+  const browser = await puppeteer.launch({
+    headless,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
 
-const LAST_RUN_FILE = 'data/.last-run.json';
-const MIN_INTERVAL_DAYS = 3;
-
-function shouldRunNow() {
-    if (process.env.FORCE_UPDATE === 'true') return true;
-    if (!fs.existsSync(LAST_RUN_FILE)) return true;
-    const { lastRun } = JSON.parse(fs.readFileSync(LAST_RUN_FILE, 'utf8'));
-    const diffDays = (Date.now() - new Date(lastRun).getTime()) / (1000 * 60 * 60 * 24);
-    return diffDays >= MIN_INTERVAL_DAYS;
-}
-
-function saveLastRun() {
-    fs.mkdirSync('data', { recursive: true });
-    fs.writeFileSync(LAST_RUN_FILE, JSON.stringify({ lastRun: new Date().toISOString() }, null, 2));
-}
-
-async function scrapeOne(browser, entry) {
+  try {
     const page = await browser.newPage();
     await page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     );
 
-    console.log(`[${entry.tab}] открываю ${entry.url}`);
-    await page.goto(entry.url, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.goto(threadUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.waitForSelector('article.message', { timeout: 30000 });
 
-    await page.waitForSelector(FIRST_POST_SELECTOR, { timeout: 30000 });
+    const lastPage = await getLastPageNumber(page);
+    const totalPages = maxPages ? Math.min(lastPage, maxPages) : lastPage;
 
-    // берём именно ПЕРВЫЙ пост темы (там обычно лежит актуальный кодекс)
-    const rawText = await page.$eval(FIRST_POST_SELECTOR, (el) => el.innerText);
+    const allPosts = [];
+    const baseUrl = threadUrl.replace(/\/page-\d+\/?$/, '').replace(/\/$/, '');
 
-    await page.close();
+    for (let p = 1; p <= totalPages; p++) {
+      const url = p === 1 ? `${baseUrl}/` : `${baseUrl}/page-${p}`;
+      if (p > 1) {
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+        await page.waitForSelector('article.message', { timeout: 30000 });
+      }
 
-    const data = parseCodexText(rawText, { name: entry.name, articleMode: entry.articleMode });
+      const posts = await page.evaluate(() => {
+        const results = [];
+        document.querySelectorAll('article.message').forEach((msg) => {
+          const body = msg.querySelector('.message-body .bbWrapper');
+          if (!body) return;
 
-    fs.mkdirSync(path.dirname(entry.outFile), { recursive: true });
+          // клонируем, чтобы не портить реальный DOM, и вырезаем цитаты
+          const clone = body.cloneNode(true);
+          clone
+            .querySelectorAll('blockquote, .bbCodeBlock--quote, .quoteContainer')
+            .forEach((q) => q.remove());
 
-    const newJson = JSON.stringify(data, null, 2);
-    const oldJson = fs.existsSync(entry.outFile) ? fs.readFileSync(entry.outFile, 'utf8') : null;
+          const text = clone.innerText.trim();
+          if (!text) return;
 
-    if (newJson === oldJson) {
-        console.log(`[${entry.tab}] изменений нет`);
-    } else {
-        fs.writeFileSync(entry.outFile, newJson, 'utf8');
-        console.log(`[${entry.tab}] файл обновлён: ${entry.outFile}`);
+          const author =
+            msg.getAttribute('data-author') ||
+            msg.querySelector('.message-name')?.innerText?.trim() ||
+            'unknown';
+          const postId = msg.id || '';
+
+          results.push({ postId, author, text });
+        });
+        return results;
+      });
+
+      posts.forEach((post) => allPosts.push({ page: p, ...post }));
+      console.error(`[scrape] страница ${p}/${totalPages}: ${posts.length} постов`);
     }
+
+    return allPosts;
+  } finally {
+    await browser.close();
+  }
 }
 
-async function main() {
-    if (!shouldRunNow()) {
-        console.log('С последнего запуска прошло меньше 3 дней, пропускаю.');
-        return;
-    }
-
-    const browser = await puppeteer.launch({
-        headless: 'new',
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-
-    try {
-        for (const entry of CODICES) {
-            try {
-                await scrapeOne(browser, entry);
-            } catch (e) {
-                // одна упавшая страница не должна валить весь прогон
-                console.error(`[${entry.tab}] ошибка: ${e.message}`);
-            }
-        }
-    } finally {
-        await browser.close();
-    }
-
-    saveLastRun();
+async function getLastPageNumber(page) {
+  const last = await page.evaluate(() => {
+    const nav = document.querySelector('.pageNav-main');
+    if (!nav) return 1;
+    const items = Array.from(nav.querySelectorAll('.pageNav-page'));
+    if (items.length === 0) return 1;
+    const nums = items
+      .map((li) => parseInt(li.textContent.trim(), 10))
+      .filter((n) => !Number.isNaN(n));
+    return nums.length ? Math.max(...nums) : 1;
+  });
+  return last || 1;
 }
 
-main().catch((e) => {
-    console.error(e);
-    process.exit(1);
-});
+module.exports = { scrapeThread };
