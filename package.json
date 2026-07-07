@@ -9,10 +9,11 @@
   },
   "devDependencies": {
     "electron": "^28.0.0",
-    "electron-builder": "^24.6.4"
+    "electron-builder": "^24.6.4",
+    "puppeteer": "^22.0.0"
   },
   "dependencies": {
-    "puppeteer": "^22.15.0"
+    "cheerio": "^1.0.0-rc.12"
   },
   "build": {
     "appId": "com.orlando.bookoflaw",
