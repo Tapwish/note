@@ -3,7 +3,7 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
-const { parseCodex } = require('./parse.js');
+const { parseCodex } = require('./parser.js');
 
 // ============================================================
 // КОНФИГУРАЦИЯ СЕРВЕРОВ
