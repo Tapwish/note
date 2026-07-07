@@ -1,12 +1,35 @@
 {
-  "name": "book-of-law-scraper",
+  "name": "book-of-law",
   "version": "1.0.0",
-  "description": "Автоматический сбор законов с форума и обновление JSON в репозитории",
-  "private": true,
+  "description": "Book of Law",
+  "main": "main.js",
   "scripts": {
-    "scrape": "node scripts/scrape.js"
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.6.4"
   },
   "dependencies": {
-    "puppeteer": "^22.0.0"
+    "puppeteer": "^22.15.0"
+  },
+  "build": {
+    "appId": "com.orlando.bookoflaw",
+    "productName": "Book of Law",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Book of Law"
+    }
   }
 }
