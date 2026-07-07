@@ -12,17 +12,17 @@ const CODICES = [
     },
     {
         tab: 'ak',
-        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-АК/',
+        url: 'https://forum.majestic-rp.ru/threads/administrativnyi-kodeks-shtata-san-andreas.3232568/',
         outFile: 'data/ak.json'
     },
     {
         tab: 'pk',
-        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ПК/',
+        url: 'https://forum.majestic-rp.ru/threads/protsessual-nyi-kodeks-shtata-san-andreas.3232571/',
         outFile: 'data/pk.json'
     },
     {
         tab: 'dk',
-        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ДК/',
+        url: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/',
         outFile: 'data/dk.json'
     }
 ];
