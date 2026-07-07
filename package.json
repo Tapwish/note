@@ -1,0 +1,12 @@
+{
+  "name": "book-of-law-scraper",
+  "version": "1.0.0",
+  "description": "Автоматический сбор законов с форума и обновление JSON в репозитории",
+  "private": true,
+  "scripts": {
+    "scrape": "node scripts/scrape.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0"
+  }
+}
