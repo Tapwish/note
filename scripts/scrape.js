@@ -1,29 +1,41 @@
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer');
-const { parseCodexText, parseDkText } = require('./parser');
+const { parseCodexText } = require('./parser');
 
 // ==== НАСТРОЙКА: впишите сюда реальные ссылки на треды каждого кодекса ====
+// articleMode:
+//   'statya'   - статьи оформлены как "Статья 1.1. Название" (УК/ПК/АК)
+//   'numbered' - статьи идут просто пронумерованным списком без слова
+//                "Статья", например "12. Текст статьи..." (ДК)
 const CODICES = [
     {
         tab: 'uk',
+        name: 'Уголовный кодекс штата San-Andreas',
         url: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
-        outFile: 'data/uk.json'
+        outFile: 'data/uk.json',
+        articleMode: 'statya'
     },
     {
         tab: 'ak',
-        url: 'https://forum.majestic-rp.ru/threads/administrativnyi-kodeks-shtata-san-andreas.3232568/',
-        outFile: 'data/ak.json'
+        name: 'Административный кодекс штата San-Andreas',
+        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-АК/',
+        outFile: 'data/ak.json',
+        articleMode: 'statya'
     },
     {
         tab: 'pk',
-        url: 'https://forum.majestic-rp.ru/threads/protsessual-nyi-kodeks-shtata-san-andreas.3232571/',
-        outFile: 'data/pk.json'
+        name: 'Процессуальный кодекс штата San-Andreas',
+        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ПК/',
+        outFile: 'data/pk.json',
+        articleMode: 'statya'
     },
     {
         tab: 'dk',
-        url: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/',
-        outFile: 'data/dk.json'
+        name: 'Дорожный кодекс штата San-Andreas',
+        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ДК/',
+        outFile: 'data/dk.json',
+        articleMode: 'numbered'
     }
 ];
 
@@ -63,7 +75,7 @@ async function scrapeOne(browser, entry) {
 
     await page.close();
 
-    const data = entry.tab === 'dk' ? parseDkText(rawText) : parseCodexText(rawText);
+    const data = parseCodexText(rawText, { name: entry.name, articleMode: entry.articleMode });
 
     fs.mkdirSync(path.dirname(entry.outFile), { recursive: true });
 
