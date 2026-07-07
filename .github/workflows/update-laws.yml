@@ -2,8 +2,8 @@ name: Update Laws
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # каждые 6 часов
-  workflow_dispatch:       # ручной запуск
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,10 +13,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -29,7 +30,7 @@ jobs:
       - name: Run parser
         run: node parser.js
 
-      - name: Commit and push changes
+      - name: Commit and push
         run: |
           git config user.name "law-bot"
           git config user.email "law-bot@users.noreply.github.com"
@@ -39,9 +40,10 @@ jobs:
           git add uk.json pk.json ak.json dk.json
           
           if git diff --staged --quiet; then
-            echo "📭 Нет изменений для коммита"
+            echo "📭 Нет изменений"
           else
             git commit -m "chore: автообновление законов $(date '+%Y-%m-%d %H:%M')"
             git push origin main
-            echo "✅ Законы обновлены"
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
