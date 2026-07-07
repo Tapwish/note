@@ -3,7 +3,7 @@ const cheerio = require('cheerio');
 const fs = require('fs');
 
 // ============================================================
-// 1. ЗАГРУЗКА HTML С ФОРУМА (только Orlando)
+// 1. ЗАГРУЗКА HTML
 // ============================================================
 
 async function fetchForumHtml(url) {
@@ -30,7 +30,7 @@ async function fetchForumHtml(url) {
 }
 
 // ============================================================
-// 2. ПАРСИНГ HTML В СТАТЬИ
+// 2. ПАРСИНГ HTML → СТАТЬИ
 // ============================================================
 
 function parseHtmlToArticles(html) {
@@ -40,6 +40,7 @@ function parseHtmlToArticles(html) {
   let current = null;
   let parts = [];
   let buffer = [];
+  let currentPartNum = 0;
 
   $('body *').each((i, el) => {
     const text = $(el).text().trim();
@@ -48,13 +49,7 @@ function parseHtmlToArticles(html) {
     const articleMatch = text.match(/^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
     if (articleMatch) {
       if (current) {
-        if (buffer.length > 0 && parts.length === 0) {
-          parts.push({ part: 1, text: buffer.join(' ') });
-        }
-        current.parts = parts;
-        articles.push(current);
-        parts = [];
-        buffer = [];
+        finishArticle();
       }
 
       current = {
@@ -62,6 +57,9 @@ function parseHtmlToArticles(html) {
         title: articleMatch[2] || 'Без названия',
         parts: []
       };
+      parts = [];
+      buffer = [];
+      currentPartNum = 0;
       return;
     }
 
@@ -70,13 +68,38 @@ function parseHtmlToArticles(html) {
     const partMatch = text.match(/^ч\.?\s*(\d+)\s*[.)]?\s*/i);
     if (partMatch) {
       if (parts.length > 0 && buffer.length > 0) {
-        parts[parts.length - 1].text = buffer.join(' ');
+        const lastPart = parts[parts.length - 1];
+        lastPart.text = cleanText(buffer.join(' '));
+        const punishment = extractPunishment(lastPart.text);
+        if (punishment) {
+          lastPart.text = removePunishment(lastPart.text);
+          lastPart.punishment = punishment;
+        }
         buffer = [];
       }
+
+      currentPartNum = parseInt(partMatch[1]);
+      const restText = text.replace(partMatch[0], '').trim();
       parts.push({
-        part: parseInt(partMatch[1]),
-        text: text.replace(partMatch[0], '').trim()
+        part: currentPartNum,
+        text: restText || '',
+        punishment: null
       });
+      return;
+    }
+
+    const punishMatch = text.match(/^Наказание[:\s]+(.*)$/i);
+    if (punishMatch) {
+      const punishment = punishMatch[1].trim();
+      if (parts.length > 0) {
+        const lastPart = parts[parts.length - 1];
+        lastPart.punishment = punishment;
+        if (!lastPart.text) {
+          lastPart.text = `Наказание: ${punishment}`;
+        }
+      } else {
+        buffer.push(`Наказание: ${punishment}`);
+      }
       return;
     }
 
@@ -84,21 +107,72 @@ function parseHtmlToArticles(html) {
   });
 
   if (current) {
-    if (buffer.length > 0 && parts.length === 0) {
-      parts.push({ part: 1, text: buffer.join(' ') });
-    }
-    if (parts.length > 0 && buffer.length > 0) {
-      parts[parts.length - 1].text += ' ' + buffer.join(' ');
-    }
-    current.parts = parts;
-    articles.push(current);
+    finishArticle();
   }
 
   return articles;
+
+  function finishArticle() {
+    if (buffer.length > 0 && parts.length === 0) {
+      const fullText = cleanText(buffer.join(' '));
+      const punishment = extractPunishment(fullText);
+      current.parts.push({
+        part: 1,
+        text: removePunishment(fullText),
+        punishment: punishment
+      });
+    } else if (parts.length > 0 && buffer.length > 0) {
+      const lastPart = parts[parts.length - 1];
+      const extraText = cleanText(buffer.join(' '));
+      if (extraText) {
+        const punishment = extractPunishment(extraText);
+        if (punishment) {
+          lastPart.punishment = lastPart.punishment || punishment;
+          lastPart.text = lastPart.text ? `${lastPart.text} ${removePunishment(extraText)}` : removePunishment(extraText);
+        } else {
+          lastPart.text = lastPart.text ? `${lastPart.text} ${extraText}` : extraText;
+        }
+      }
+    }
+
+    current.parts = parts.map(p => ({
+      part: p.part,
+      text: cleanText(p.text || 'Нет текста'),
+      punishment: p.punishment ? cleanText(p.punishment) : null
+    }));
+
+    if (current.parts.length === 0) {
+      current.parts.push({
+        part: 1,
+        text: current.title || 'Нет текста',
+        punishment: null
+      });
+    }
+
+    articles.push(current);
+    current = null;
+  }
+}
+
+function cleanText(text) {
+  if (!text) return '';
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+}
+
+function extractPunishment(text) {
+  const match = text.match(/Наказание[:\s]+([^\n]*)/i);
+  return match ? cleanText(match[1]) : null;
+}
+
+function removePunishment(text) {
+  return text.replace(/Наказание[:\s]+[^\n]*/i, '').trim();
 }
 
 // ============================================================
-// 3. ЗАПУСК ДЛЯ ORLANDO
+// 3. ЗАПУСК
 // ============================================================
 
 async function main() {
@@ -115,6 +189,10 @@ async function main() {
     ak: 'Административный кодекс штата San-Andreas',
     dk: 'Дорожный кодекс штата San-Andreas'
   };
+
+  if (!fs.existsSync('orlando')) {
+    fs.mkdirSync('orlando');
+  }
 
   for (const [type, url] of Object.entries(urls)) {
     try {
@@ -133,8 +211,8 @@ async function main() {
         totalArticles: articles.length
       };
 
-      fs.writeFileSync(`${type}.json`, JSON.stringify(result, null, 2));
-      console.log(`✅ ${type}.json — ${articles.length} статей`);
+      fs.writeFileSync(`orlando/${type}.json`, JSON.stringify(result, null, 2));
+      console.log(`✅ orlando/${type}.json — ${articles.length} статей`);
     } catch (e) {
       console.error(`❌ ${type}: ${e.message}`);
     }
