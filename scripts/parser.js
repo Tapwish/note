@@ -1,31 +1,11 @@
-'use strict';
-
-/**
- * АВТОМАТИЧЕСКИЙ ПАРСЕР ВСЕХ КОДЕКСОВ
- * - Загружает страницы с форума
- * - Парсит в единый формат
- * - Сохраняет JSON-файлы
- * 
- * Запуск: node parser.js
- */
-
 const fs = require('fs');
-const puppeteer = require('puppeteer');
 
 // ============================================================
-// 1. РЕГУЛЯРНЫЕ ВЫРАЖЕНИЯ
+// УНИВЕРСАЛЬНЫЙ ПАРСЕР — РАБОТАЕТ С ЛЮБЫМ СТИЛЕМ
 // ============================================================
 
-const ARTICLE_RE = /^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i;
-const HEADER_RE = /^[Гг]лава\s+[\dIVXLCDM]+/i;
-const PUNISHMENT_RE = /Наказание[:\s]+([^\n]*)/i;
-const PART_RE = /^ч\.?\s*(\d+)\s*[.)]?\s*/i;
-
-// ============================================================
-// 2. ПАРСЕР ТЕКСТА
-// ============================================================
-
-function parseText(text) {
+function parseAnyLaw(text) {
+  // Чистим текст
   const lines = text
     .replace(/\r\n/g, '\n')
     .split('\n')
@@ -34,192 +14,166 @@ function parseText(text) {
 
   const articles = [];
   let current = null;
-  let body = [];
+  let buffer = [];
   let currentPart = null;
-  let partBody = [];
+  let partBuffer = [];
 
   for (const line of lines) {
-    // Новая статья
-    const match = line.match(ARTICLE_RE);
-    if (match) {
-      // Сохраняем предыдущую
-      if (current) {
-        finalizeArticle(current, body, currentPart, partBody);
-        articles.push(current);
-        body = [];
-        partBody = [];
-        currentPart = null;
-      }
-
+    // === НОВАЯ СТАТЬЯ ===
+    const articleMatch = line.match(/^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
+    if (articleMatch) {
+      saveArticle();
+      
       current = {
-        number: match[1],
-        title: match[2].trim() || 'Без названия',
+        number: articleMatch[1],
+        title: clean(articleMatch[2] || 'Без названия'),
         parts: []
       };
+      currentPart = null;
+      partBuffer = [];
+      buffer = [];
       continue;
     }
 
-    // Пропускаем заголовки глав
-    if (HEADER_RE.test(line)) continue;
+    // === ПРОПУСКАЕМ ГЛАВЫ ===
+    if (/^[Гг]лава\s+[\dIVXLCDM]+/i.test(line)) continue;
 
+    // === ЕСЛИ НЕТ АКТИВНОЙ СТАТЬИ — ПРОПУСКАЕМ ===
     if (!current) continue;
 
-    // Проверяем на часть "ч. X"
-    const partMatch = line.match(PART_RE);
+    // === НОВАЯ ЧАСТЬ (ч. 1, ч. 2) ===
+    const partMatch = line.match(/^ч\.?\s*(\d+)\s*[.)]?\s*(.*)$/i);
     if (partMatch) {
-      // Сохраняем предыдущую часть
-      if (currentPart !== null && partBody.length > 0) {
-        const fullText = partBody.join(' ');
-        const punishment = extractPunishment(fullText);
-        current.parts.push({
-          part: currentPart,
-          text: removePunishment(fullText),
-          punishment: punishment
-        });
-        partBody = [];
-      }
+      savePart();
+      
       currentPart = parseInt(partMatch[1]);
-      const rest = line.replace(PART_RE, '').trim();
-      if (rest) partBody.push(rest);
+      if (partMatch[2]) partBuffer.push(partMatch[2]);
       continue;
     }
 
-    // Обычная строка
+    // === НАКАЗАНИЕ (отдельной строкой) ===
+    const punishMatch = line.match(/^Наказание[:\s]+(.*)$/i);
+    if (punishMatch) {
+      if (currentPart !== null) {
+        // Если есть активная часть — наказание к ней
+        partBuffer.push(`Наказание: ${punishMatch[1]}`);
+      } else {
+        // Если нет части — наказание в буфер статьи
+        buffer.push(`Наказание: ${punishMatch[1]}`);
+      }
+      continue;
+    }
+
+    // === ОБЫЧНАЯ СТРОКА ===
     if (currentPart !== null) {
-      partBody.push(line);
+      partBuffer.push(line);
     } else {
-      body.push(line);
+      buffer.push(line);
     }
   }
 
-  // Сохраняем последнюю статью
-  if (current) {
-    finalizeArticle(current, body, currentPart, partBody);
-    articles.push(current);
-  }
+  // Сохраняем последние
+  savePart();
+  saveArticle();
 
   return articles;
+
+  // ========== ВНУТРЕННИЕ ФУНКЦИИ ==========
+
+  function savePart() {
+    if (currentPart !== null && partBuffer.length > 0) {
+      const text = clean(partBuffer.join(' '));
+      const punishment = extractPunishment(text);
+      current.parts.push({
+        part: currentPart,
+        text: removePunishment(text),
+        punishment: punishment
+      });
+      partBuffer = [];
+    }
+  }
+
+  function saveArticle() {
+    if (!current) return;
+    
+    // Если есть буфер, но не было частей — создаём ч. 1
+    if (buffer.length > 0 && current.parts.length === 0) {
+      const text = clean(buffer.join(' '));
+      const punishment = extractPunishment(text);
+      current.parts.push({
+        part: 1,
+        text: removePunishment(text),
+        punishment: punishment
+      });
+      buffer = [];
+    }
+    
+    // Если нет ни частей, ни буфера — заголовок
+    if (current.parts.length === 0) {
+      current.parts.push({
+        part: 1,
+        text: current.title || 'Нет текста',
+        punishment: null
+      });
+    }
+    
+    articles.push(current);
+    current = null;
+  }
 }
 
-function finalizeArticle(article, body, currentPart, partBody) {
-  if (currentPart !== null && partBody.length > 0) {
-    const fullText = partBody.join(' ');
-    const punishment = extractPunishment(fullText);
-    article.parts.push({
-      part: currentPart,
-      text: removePunishment(fullText),
-      punishment: punishment
-    });
-  } else if (body.length > 0) {
-    const fullText = body.join(' ');
-    const punishment = extractPunishment(fullText);
-    article.parts.push({
-      part: 1,
-      text: removePunishment(fullText),
-      punishment: punishment
-    });
-  } else {
-    article.parts.push({
-      part: 1,
-      text: article.title || 'Нет текста',
-      punishment: null
-    });
-  }
+// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+
+function clean(text) {
+  return text.replace(/\s+/g, ' ').trim();
 }
 
 function extractPunishment(text) {
-  const match = text.match(PUNISHMENT_RE);
+  const match = text.match(/Наказание[:\s]+([^\n]*)/i);
   return match ? match[1].trim() : null;
 }
 
 function removePunishment(text) {
-  return text.replace(PUNISHMENT_RE, '').trim();
+  return text.replace(/Наказание[:\s]+[^\n]*/i, '').trim();
 }
 
 // ============================================================
-// 3. ЗАГРУЗКА С ФОРУМА
+// ЗАПУСК ДЛЯ ВСЕХ СЕРВЕРОВ
 // ============================================================
 
-async function fetchPage(url) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-  const page = await browser.newPage();
+const servers = [
+  'orlando',
+  'boston',
+  'miami'
+  // ... добавь остальные
+];
 
-  console.log(`📥 Загрузка: ${url}`);
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+const types = ['uk', 'pk', 'ak', 'dk'];
 
-  await page.waitForSelector('.message-content', { timeout: 10000 });
-
-  const text = await page.evaluate(() => {
-    const messages = document.querySelectorAll('.message-content');
-    return Array.from(messages)
-      .map(msg => msg.textContent || '')
-      .join('\n');
-  });
-
-  await browser.close();
-  return text;
-}
-
-// ============================================================
-// 4. СОХРАНЕНИЕ JSON
-// ============================================================
-
-function saveJSON(articles, codexType, title, url) {
-  const result = {
-    server: 'orlando',
-    serverName: 'Orlando',
-    codexType: codexType,
-    title: title,
-    url: url,
-    lastUpdate: new Date().toISOString(),
-    articles: articles,
-    totalArticles: articles.length
-  };
-
-  fs.writeFileSync(`${codexType}.json`, JSON.stringify(result, null, 2));
-  console.log(`✅ ${codexType}.json — ${articles.length} статей`);
-}
-
-// ============================================================
-// 5. ЗАПУСК
-// ============================================================
-
-async function main() {
-  const codexes = {
-    uk: {
-      url: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
-      title: 'Уголовный кодекс штата San-Andreas'
-    },
-    pk: {
-      url: 'https://forum.majestic-rp.ru/threads/protsessual-nyi-kodeks-shtata-san-andreas.3232571/',
-      title: 'Процессуальный кодекс штата San-Andreas'
-    },
-    ak: {
-      url: 'https://forum.majestic-rp.ru/threads/administrativnyi-kodeks-shtata-san-andreas.3232568/',
-      title: 'Административный кодекс штата San-Andreas'
-    },
-    dk: {
-      url: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/',
-      title: 'Дорожный кодекс штата San-Andreas'
-    }
-  };
-
-  for (const [type, data] of Object.entries(codexes)) {
+for (const server of servers) {
+  for (const type of types) {
     try {
-      console.log(`\n📌 Обработка ${type.toUpperCase()}...`);
-      const raw = await fetchPage(data.url);
-      const articles = parseText(raw);
-      saveJSON(articles, type, data.title, data.url);
+      const raw = fs.readFileSync(`raw/${server}_${type}.txt`, 'utf8');
+      const articles = parseAnyLaw(raw);
+      
+      const result = {
+        server: server,
+        serverName: server.charAt(0).toUpperCase() + server.slice(1),
+        codexType: type,
+        lastUpdate: new Date().toISOString(),
+        articles: articles,
+        totalArticles: articles.length
+      };
+
+      // Создаём папку для сервера
+      if (!fs.existsSync(`laws/${server}`)) {
+        fs.mkdirSync(`laws/${server}`, { recursive: true });
+      }
+
+      fs.writeFileSync(`laws/${server}/${type}.json`, JSON.stringify(result, null, 2));
+      console.log(`✅ ${server}/${type}.json — ${articles.length} статей`);
     } catch (e) {
-      console.error(`❌ ${type}: ${e.message}`);
+      console.log(`❌ ${server}/${type}: ${e.message}`);
     }
   }
-
-  console.log('\n🎉 ВСЁ ГОТОВО!');
 }
-
-// Запуск
-main().catch(console.error);
