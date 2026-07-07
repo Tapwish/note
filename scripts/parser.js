@@ -1,179 +1,146 @@
+const puppeteer = require('puppeteer');
+const cheerio = require('cheerio');
 const fs = require('fs');
 
 // ============================================================
-// УНИВЕРСАЛЬНЫЙ ПАРСЕР — РАБОТАЕТ С ЛЮБЫМ СТИЛЕМ
+// 1. ЗАГРУЗКА HTML С ФОРУМА (только Orlando)
 // ============================================================
 
-function parseAnyLaw(text) {
-  // Чистим текст
-  const lines = text
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
+async function fetchForumHtml(url) {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+  const page = await browser.newPage();
 
+  console.log(`📥 Загрузка: ${url}`);
+  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+
+  await page.waitForSelector('.message-content', { timeout: 10000 });
+
+  const html = await page.evaluate(() => {
+    const messages = document.querySelectorAll('.message-content');
+    return Array.from(messages)
+      .map(msg => msg.innerHTML || '')
+      .join('\n');
+  });
+
+  await browser.close();
+  return html;
+}
+
+// ============================================================
+// 2. ПАРСИНГ HTML В СТАТЬИ
+// ============================================================
+
+function parseHtmlToArticles(html) {
+  const $ = cheerio.load(html);
+  
   const articles = [];
   let current = null;
+  let parts = [];
   let buffer = [];
-  let currentPart = null;
-  let partBuffer = [];
 
-  for (const line of lines) {
-    // === НОВАЯ СТАТЬЯ ===
-    const articleMatch = line.match(/^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
+  $('body *').each((i, el) => {
+    const text = $(el).text().trim();
+    if (!text) return;
+
+    const articleMatch = text.match(/^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
     if (articleMatch) {
-      saveArticle();
-      
+      if (current) {
+        if (buffer.length > 0 && parts.length === 0) {
+          parts.push({ part: 1, text: buffer.join(' ') });
+        }
+        current.parts = parts;
+        articles.push(current);
+        parts = [];
+        buffer = [];
+      }
+
       current = {
         number: articleMatch[1],
-        title: clean(articleMatch[2] || 'Без названия'),
+        title: articleMatch[2] || 'Без названия',
         parts: []
       };
-      currentPart = null;
-      partBuffer = [];
-      buffer = [];
-      continue;
+      return;
     }
 
-    // === ПРОПУСКАЕМ ГЛАВЫ ===
-    if (/^[Гг]лава\s+[\dIVXLCDM]+/i.test(line)) continue;
+    if (!current) return;
 
-    // === ЕСЛИ НЕТ АКТИВНОЙ СТАТЬИ — ПРОПУСКАЕМ ===
-    if (!current) continue;
-
-    // === НОВАЯ ЧАСТЬ (ч. 1, ч. 2) ===
-    const partMatch = line.match(/^ч\.?\s*(\d+)\s*[.)]?\s*(.*)$/i);
+    const partMatch = text.match(/^ч\.?\s*(\d+)\s*[.)]?\s*/i);
     if (partMatch) {
-      savePart();
-      
-      currentPart = parseInt(partMatch[1]);
-      if (partMatch[2]) partBuffer.push(partMatch[2]);
-      continue;
-    }
-
-    // === НАКАЗАНИЕ (отдельной строкой) ===
-    const punishMatch = line.match(/^Наказание[:\s]+(.*)$/i);
-    if (punishMatch) {
-      if (currentPart !== null) {
-        // Если есть активная часть — наказание к ней
-        partBuffer.push(`Наказание: ${punishMatch[1]}`);
-      } else {
-        // Если нет части — наказание в буфер статьи
-        buffer.push(`Наказание: ${punishMatch[1]}`);
+      if (parts.length > 0 && buffer.length > 0) {
+        parts[parts.length - 1].text = buffer.join(' ');
+        buffer = [];
       }
-      continue;
+      parts.push({
+        part: parseInt(partMatch[1]),
+        text: text.replace(partMatch[0], '').trim()
+      });
+      return;
     }
 
-    // === ОБЫЧНАЯ СТРОКА ===
-    if (currentPart !== null) {
-      partBuffer.push(line);
-    } else {
-      buffer.push(line);
+    buffer.push(text);
+  });
+
+  if (current) {
+    if (buffer.length > 0 && parts.length === 0) {
+      parts.push({ part: 1, text: buffer.join(' ') });
     }
+    if (parts.length > 0 && buffer.length > 0) {
+      parts[parts.length - 1].text += ' ' + buffer.join(' ');
+    }
+    current.parts = parts;
+    articles.push(current);
   }
-
-  // Сохраняем последние
-  savePart();
-  saveArticle();
 
   return articles;
-
-  // ========== ВНУТРЕННИЕ ФУНКЦИИ ==========
-
-  function savePart() {
-    if (currentPart !== null && partBuffer.length > 0) {
-      const text = clean(partBuffer.join(' '));
-      const punishment = extractPunishment(text);
-      current.parts.push({
-        part: currentPart,
-        text: removePunishment(text),
-        punishment: punishment
-      });
-      partBuffer = [];
-    }
-  }
-
-  function saveArticle() {
-    if (!current) return;
-    
-    // Если есть буфер, но не было частей — создаём ч. 1
-    if (buffer.length > 0 && current.parts.length === 0) {
-      const text = clean(buffer.join(' '));
-      const punishment = extractPunishment(text);
-      current.parts.push({
-        part: 1,
-        text: removePunishment(text),
-        punishment: punishment
-      });
-      buffer = [];
-    }
-    
-    // Если нет ни частей, ни буфера — заголовок
-    if (current.parts.length === 0) {
-      current.parts.push({
-        part: 1,
-        text: current.title || 'Нет текста',
-        punishment: null
-      });
-    }
-    
-    articles.push(current);
-    current = null;
-  }
-}
-
-// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-
-function clean(text) {
-  return text.replace(/\s+/g, ' ').trim();
-}
-
-function extractPunishment(text) {
-  const match = text.match(/Наказание[:\s]+([^\n]*)/i);
-  return match ? match[1].trim() : null;
-}
-
-function removePunishment(text) {
-  return text.replace(/Наказание[:\s]+[^\n]*/i, '').trim();
 }
 
 // ============================================================
-// ЗАПУСК ДЛЯ ВСЕХ СЕРВЕРОВ
+// 3. ЗАПУСК ДЛЯ ORLANDO
 // ============================================================
 
-const servers = [
-  'orlando',
-  'boston',
-  'miami'
-  // ... добавь остальные
-];
+async function main() {
+  const urls = {
+    uk: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
+    pk: 'https://forum.majestic-rp.ru/threads/protsessual-nyi-kodeks-shtata-san-andreas.3232571/',
+    ak: 'https://forum.majestic-rp.ru/threads/administrativnyi-kodeks-shtata-san-andreas.3232568/',
+    dk: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/'
+  };
 
-const types = ['uk', 'pk', 'ak', 'dk'];
+  const titles = {
+    uk: 'Уголовный кодекс штата San-Andreas',
+    pk: 'Процессуальный кодекс штата San-Andreas',
+    ak: 'Административный кодекс штата San-Andreas',
+    dk: 'Дорожный кодекс штата San-Andreas'
+  };
 
-for (const server of servers) {
-  for (const type of types) {
+  for (const [type, url] of Object.entries(urls)) {
     try {
-      const raw = fs.readFileSync(`raw/${server}_${type}.txt`, 'utf8');
-      const articles = parseAnyLaw(raw);
+      console.log(`\n📌 ${type.toUpperCase()} — загрузка...`);
+      const html = await fetchForumHtml(url);
+      const articles = parseHtmlToArticles(html);
       
       const result = {
-        server: server,
-        serverName: server.charAt(0).toUpperCase() + server.slice(1),
+        server: 'orlando',
+        serverName: 'Orlando',
         codexType: type,
+        title: titles[type],
+        url: url,
         lastUpdate: new Date().toISOString(),
         articles: articles,
         totalArticles: articles.length
       };
 
-      // Создаём папку для сервера
-      if (!fs.existsSync(`laws/${server}`)) {
-        fs.mkdirSync(`laws/${server}`, { recursive: true });
-      }
-
-      fs.writeFileSync(`laws/${server}/${type}.json`, JSON.stringify(result, null, 2));
-      console.log(`✅ ${server}/${type}.json — ${articles.length} статей`);
+      fs.writeFileSync(`${type}.json`, JSON.stringify(result, null, 2));
+      console.log(`✅ ${type}.json — ${articles.length} статей`);
     } catch (e) {
-      console.log(`❌ ${server}/${type}: ${e.message}`);
+      console.error(`❌ ${type}: ${e.message}`);
     }
   }
+
+  console.log('\n✅ Готово!');
 }
+
+main().catch(console.error);
