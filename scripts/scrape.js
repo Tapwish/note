@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer');
-const { parseCodexText } = require('./parser');
+const { parseCodexText, parseDkText } = require('./parser');
 
 // ==== НАСТРОЙКА: впишите сюда реальные ссылки на треды каждого кодекса ====
 const CODICES = [
@@ -12,17 +12,17 @@ const CODICES = [
     },
     {
         tab: 'ak',
-        url: 'https://forum.majestic-rp.ru/threads/administrativnyi-kodeks-shtata-san-andreas.3232568/',
+        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-АК/',
         outFile: 'data/ak.json'
     },
     {
         tab: 'pk',
-        url: 'https://forum.majestic-rp.ru/threads/protsessual-nyi-kodeks-shtata-san-andreas.3232571/',
+        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ПК/',
         outFile: 'data/pk.json'
     },
     {
         tab: 'dk',
-        url: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/',
+        url: 'https://forum.majestic-rp.ru/threads/ЗАМЕНИТЬ-НА-ССЫЛКУ-ДК/',
         outFile: 'data/dk.json'
     }
 ];
@@ -63,7 +63,7 @@ async function scrapeOne(browser, entry) {
 
     await page.close();
 
-    const data = parseCodexText(rawText);
+    const data = entry.tab === 'dk' ? parseDkText(rawText) : parseCodexText(rawText);
 
     fs.mkdirSync(path.dirname(entry.outFile), { recursive: true });
 
