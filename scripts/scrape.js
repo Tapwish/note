@@ -1,6 +1,7 @@
 'use strict';
 
 const puppeteer = require('puppeteer');
+const { parseCodex, flatten } = require('./parse');
 
 /**
  * Скрапит тему форума XenForo (Majestic RP) и возвращает массив постов:
@@ -49,8 +50,8 @@ async function setupPage(page) {
 /**
  * То же самое, что и scrapeThread(), но работает на уже открытой
  * (переданной снаружи) странице puppeteer. Нужно, чтобы при автопоиске
- * нескольких тем кодекса (findCodexThreads/scrapeCodexAuto) не поднимать
- * браузер заново для каждой темы.
+ * нескольких тем кодекса (findCodexThreads/scrapeCodexAuto/scrapeAllServersLegalBase)
+ * не поднимать браузер заново для каждой темы.
  */
 async function scrapeThreadWithPage(page, threadUrl, opts = {}) {
   const { maxPages } = opts;
@@ -121,38 +122,73 @@ async function getLastPageNumber(page) {
 }
 
 /**
- * Регулярка для распознавания "кодексных" тем по заголовку/тексту ссылки:
- * УК / АК / ПК / ДК как отдельные аббревиатуры (в скобках, квадратных
- * скобках или просто отдельным словом), плюс полные названия
- * ("Уголовный кодекс" и т.п.).
+ * Список кодексов, которые ищем, с отдельной регуляркой на каждый —
+ * так мы не только находим "кодексную" тему, но и знаем, ЧТО это за
+ * кодекс (УК/АК/ПК/ДК), чтобы потом одинаково размечать статьи вне
+ * зависимости от того, на каком сервере и в какой теме они найдены.
  *
  * \b не используется, т.к. в JS без /u-флага с \p{L} он не понимает
  * границы кириллических слов — вместо этого проверяем соседние символы
  * явно (пробел/скобка/начало-конец строки).
+ *
+ * Список можно дополнять новыми кодексами по мере надобности —
+ * остальной пайплайн подхватит их автоматически.
  */
-const CODEX_TITLE_RE =
-  /(?:^|[\s\[(])(УК|АК|ПК|ДК)(?:[\s\])]|$)|Уголовн\w*\s*кодекс|Административн\w*\s*кодекс|Дорожн\w*\s*кодекс|Процессуальн\w*\s*кодекс/i;
+const CODEX_PATTERNS = [
+  {
+    type: 'УК',
+    label: 'Уголовный кодекс',
+    re: /(?:^|[\s\[(])УК(?:[\s\])]|$)|Уголовн\w*\s*кодекс/i,
+  },
+  {
+    type: 'АК',
+    label: 'Административный кодекс',
+    re: /(?:^|[\s\[(])АК(?:[\s\])]|$)|Административн\w*\s*кодекс/i,
+  },
+  {
+    type: 'ПК',
+    label: 'Процессуальный кодекс',
+    re: /(?:^|[\s\[(])ПК(?:[\s\])]|$)|Процессуальн\w*\s*кодекс/i,
+  },
+  {
+    type: 'ДК',
+    label: 'Дорожный кодекс',
+    re: /(?:^|[\s\[(])ДК(?:[\s\])]|$)|Дорожн\w*\s*кодекс/i,
+  },
+];
+
+/** Совпадает ли заголовок хоть с одним известным кодексом. */
+function isCodexTitle(title) {
+  return CODEX_PATTERNS.some((p) => p.re.test(title));
+}
+
+/** Определяет тип кодекса (УК/АК/ПК/ДК/...) по заголовку темы. */
+function detectCodexType(title) {
+  const found = CODEX_PATTERNS.find((p) => p.re.test(title));
+  return found ? found.type : null;
+}
 
 /**
  * Ищет темы форума, похожие на кодекс (УК/АК/ПК/ДК и т.п.), начиная с
  * ЛЮБОЙ страницы форума — это может быть страница раздела, подраздела
- * или сразу страница темы.
+ * или сразу страница темы. Как правило сюда передают раздел
+ * "Законодательная база" конкретного сервера.
  *
  * Логика обхода:
  *  1. Если открытая страница — это уже страница темы (есть h1.p-title-value),
- *     проверяем её заголовок на соответствие CODEX_TITLE_RE.
+ *     проверяем её заголовок на соответствие CODEX_PATTERNS.
  *  2. Если это список раздела — сначала проверяем заголовки ссылок на темы
  *     (.structItem-title a), совпавшие сразу добавляем.
  *  3. Затем в пределах maxDepth рекурсивно заходим в ссылки на подразделы
  *     (.node-title a) и в остальные темы, чтобы поймать кодекс, даже если
  *     он лежит в подразделе или его нет в списке видимых по regex заголовков.
  *
- * @param {string} startUrl - любая страница форума
+ * @param {string} startUrl - любая страница форума (обычно раздел "Законодательная база")
  * @param {object} [opts]
  * @param {boolean} [opts.headless=true]
  * @param {number} [opts.maxDepth=2] - насколько глубоко идти по подразделам
  * @param {number} [opts.maxThreads=10] - не искать больше стольки тем
- * @returns {Promise<Array<{url:string, title:string}>>}
+ * @returns {Promise<Array<{url:string, title:string, codexType:string|null}>>}
  */
 async function findCodexThreads(startUrl, opts = {}) {
   const { headless = true, maxDepth = 2, maxThreads = 10 } = opts;
@@ -163,13 +199,13 @@ async function findCodexThreads(startUrl, opts = {}) {
   });
 
   const visited = new Set();
-  const found = new Map(); // url -> title
+  const found = new Map(); // url -> {title, codexType}
 
   try {
     const page = await browser.newPage();
     await setupPage(page);
     await crawl(startUrl, 0);
-    return Array.from(found.entries()).map(([url, title]) => ({ url, title }));
+    return Array.from(found.entries()).map(([url, meta]) => ({ url, ...meta }));
 
     async function crawl(url, depth) {
       if (found.size >= maxThreads) return;
@@ -192,9 +228,9 @@ async function findCodexThreads(startUrl, opts = {}) {
       });
 
       if (threadTitle) {
-        if (CODEX_TITLE_RE.test(threadTitle)) {
+        if (isCodexTitle(threadTitle)) {
           const base = cleanUrl.replace(/\/page-\d+\/?$/, '').replace(/\/$/, '');
-          found.set(base, threadTitle);
+          found.set(base, { title: threadTitle, codexType: detectCodexType(threadTitle) });
           console.error(`[scrape] найдена тема кодекса: "${threadTitle}" — ${base}`);
         }
         return; // дальше со страницы темы вглубь не идём
@@ -218,9 +254,9 @@ async function findCodexThreads(startUrl, opts = {}) {
       // без захода внутрь (экономим запросы)
       for (const t of links.threads) {
         if (found.size >= maxThreads) break;
-        if (CODEX_TITLE_RE.test(t.text)) {
+        if (isCodexTitle(t.text)) {
           const base = t.href.replace(/\/page-\d+\/?$/, '').replace(/\/$/, '');
-          found.set(base, t.text);
+          found.set(base, { title: t.text, codexType: detectCodexType(t.text) });
           console.error(`[scrape] найдена тема кодекса: "${t.text}" — ${base}`);
         }
       }
@@ -251,7 +287,7 @@ async function findCodexThreads(startUrl, opts = {}) {
  * @param {number} [opts.maxPages] - ограничение страниц на тему (для теста)
  * @param {number} [opts.maxDepth=2] - глубина обхода подразделов при поиске
  * @param {number} [opts.maxThreads=10] - максимум найденных тем кодекса
- * @returns {Promise<Array<{url:string, title:string, posts:Array}>>}
+ * @returns {Promise<Array<{url:string, title:string, codexType:string|null, posts:Array}>>}
  */
 async function scrapeCodexAuto(startUrl, opts = {}) {
   const { headless = true, maxPages, maxDepth = 2, maxThreads = 10 } = opts;
@@ -277,7 +313,7 @@ async function scrapeCodexAuto(startUrl, opts = {}) {
     for (const t of threads) {
       try {
         const posts = await scrapeThreadWithPage(page, t.url, { maxPages });
-        result.push({ url: t.url, title: t.title, posts });
+        result.push({ url: t.url, title: t.title, codexType: t.codexType, posts });
       } catch (e) {
         console.error(`[scrape] не удалось обработать тему ${t.url}: ${e.message}`);
       }
@@ -288,4 +324,112 @@ async function scrapeCodexAuto(startUrl, opts = {}) {
   }
 }
 
-module.exports = { scrapeThread, findCodexThreads, scrapeCodexAuto };
+/**
+ * Ссылки на раздел "Законодательная база" по каждому серверу Majestic.
+ * Для Orlando ссылка настоящая, для остальных — заглушка (замени
+ * 'PUT_LINK_HERE' на реальный ID/ссылку раздела соответствующего
+ * сервера). Список можно дополнять по мере надобности.
+ */
+const SERVERS = {
+  'New York': 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Detroit: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Chicago: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  'San Francisco': 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Atlanta: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  'San Diego': 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  'Los Angeles': 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Miami: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  'Las Vegas': 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Washington: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Dallas: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Boston: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Houston: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Seattle: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Phoenix: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Denver: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Portland: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.PUT_LINK_HERE/',
+  Orlando: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/',
+};
+
+/**
+ * Главный пайплайн: обходит раздел "Законодательная база" каждого сервера
+ * из SERVERS (или из переданного объекта servers), находит там все темы
+ * кодексов (УК/АК/ПК/ДК — см. CODEX_PATTERNS), скрапит их и парсит через
+ * parseCodex/flatten из parse.js.
+ *
+ * Результат — одинаковая структура записей для ЛЮБОГО кодекса и сервера:
+ *   {
+ *     number, articleNumber, part, partLabel,
+ *     tag, title, text, punishment,
+ *     server, codexType, codexTitle, threadUrl
+ *   }
+ * Это значит, что статья ДК на Orlando и статья УК на New York после
+ * парсинга выглядят абсолютно одинаково по форме (различаются только
+ * содержанием и метаданными server/codexType) — независимо от того,
+ * был ли в исходнике формат "ч. N" или формат с "Наказание:" сразу
+ * под текстом.
+ *
+ * @param {object} [servers=SERVERS] - карта { имяСервера: ссылкаНаРазделЗаконки }
+ * @param {object} [opts]
+ * @param {boolean} [opts.headless=true]
+ * @param {number} [opts.maxPages] - ограничение страниц на тему (для теста)
+ * @param {number} [opts.maxDepth=1] - глубина обхода подразделов внутри раздела законки
+ * @param {number} [opts.maxThreads=10] - максимум найденных тем кодекса на сервер
+ * @returns {Promise<Array<{server:string, sectionUrl:string, threadUrl:string, codexType:string|null, codexTitle:string, entries:Array}>>}
+ */
+async function scrapeAllServersLegalBase(servers = SERVERS, opts = {}) {
+  const { headless = true, maxPages, maxDepth = 1, maxThreads = 10 } = opts;
+
+  const allResults = [];
+
+  for (const [server, sectionUrl] of Object.entries(servers)) {
+    if (!sectionUrl || sectionUrl.includes('PUT_LINK_HERE')) {
+      console.error(`[scrape] пропускаю сервер "${server}" — ссылка на законку не задана`);
+      continue;
+    }
+
+    console.error(`[scrape] === сервер: ${server} (${sectionUrl}) ===`);
+
+    let threads;
+    try {
+      threads = await scrapeCodexAuto(sectionUrl, { headless, maxPages, maxDepth, maxThreads });
+    } catch (e) {
+      console.error(`[scrape] ошибка при обработке сервера "${server}": ${e.message}`);
+      continue;
+    }
+
+    for (const t of threads) {
+      const rawText = t.posts.map((p) => p.text).join('\n');
+      const articles = parseCodex(rawText);
+      const entries = flatten(articles).map((e) => ({
+        ...e,
+        server,
+        codexType: t.codexType,
+        codexTitle: t.title,
+        threadUrl: t.url,
+      }));
+
+      allResults.push({
+        server,
+        sectionUrl,
+        threadUrl: t.url,
+        codexType: t.codexType,
+        codexTitle: t.title,
+        entries,
+      });
+    }
+  }
+
+  return allResults;
+}
+
+module.exports = {
+  scrapeThread,
+  scrapeThreadWithPage,
+  findCodexThreads,
+  scrapeCodexAuto,
+  scrapeAllServersLegalBase,
+  SERVERS,
+  CODEX_PATTERNS,
+  detectCodexType,
+};
