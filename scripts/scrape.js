@@ -1,255 +1,303 @@
 'use strict';
 
+const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const puppeteer = require('puppeteer');
-const { parseCodexText } = require('./parse');
-const {
-  BASE_URL,
-  FORUM_ROOT_URL,
-  LAW_SUBFORUM_PATTERNS,
-  SERVERS,
-  CODEX_TYPES,
-  OUTPUT_DIR,
-  REQUEST_DELAY_MS,
-  MAX_THREAD_PAGES,
-} = require('./config');
+const { parseCodex } = require('./parse.js');
 
-const FORCE_UPDATE = String(process.env.FORCE_UPDATE || '').toLowerCase() === 'true';
-const ONLY_SERVER = process.argv.includes('--server')
-  ? process.argv[process.argv.indexOf('--server') + 1]
-  : null;
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const abs = (href) => (href.startsWith('http') ? href : `${BASE_URL}${href.startsWith('/') ? '' : '/'}${href}`);
-
-function log(...args) {
-  console.log(`[${new Date().toISOString()}]`, ...args);
-}
-
-function hash(str) {
-  return crypto.createHash('sha256').update(str).digest('hex');
-}
-
-// ---------------------------------------------------------------------------
-// Page helpers (XenForo 2 default markup — adjust selectors here if the
-// forum's theme differs from stock XenForo).
-// ---------------------------------------------------------------------------
-
-async function findServerCategoryUrl(page, server) {
-  await page.goto(FORUM_ROOT_URL, { waitUntil: 'networkidle2', timeout: 45000 });
-  const links = await page.$$eval('a', (as) =>
-    as.map((a) => ({ href: a.getAttribute('href') || '', text: (a.textContent || '').trim() }))
-  );
-  const nameRe = new RegExp(server.ru.replace(/\s+/g, '\\s*'), 'i');
-  const match = links.find((l) => nameRe.test(l.text));
-  return match ? abs(match.href) : null;
-}
-
-async function findLawSubforumUrl(page, categoryUrl) {
-  await page.goto(categoryUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-  const links = await page.$$eval('a', (as) =>
-    as.map((a) => ({ href: a.getAttribute('href') || '', text: (a.textContent || '').trim() }))
-  );
-  const match = links.find((l) => LAW_SUBFORUM_PATTERNS.some((re) => re.test(l.text) || re.test(l.href)));
-  return match ? abs(match.href) : null;
-}
-
-async function resolveLawSubforumUrl(page, server) {
-  if (server.forumUrl) return server.forumUrl;
-  const categoryUrl = await findServerCategoryUrl(page, server);
-  if (!categoryUrl) return null;
-  await sleep(REQUEST_DELAY_MS);
-  return findLawSubforumUrl(page, categoryUrl);
-}
-
-// Collect { title, url } for every thread in the subforum, across pages.
-async function listThreads(page, subforumUrl) {
-  const threads = [];
-  let pageUrl = subforumUrl;
-  let guard = 0;
-
-  while (pageUrl && guard < 20) {
-    guard += 1;
-    await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-
-    const pageThreads = await page.$$eval('.structItem--thread .structItem-title a', (as) =>
-      as
-        .filter((a) => !a.closest('.structItem-title').querySelector('.labelLink')) // skip "moved/deleted" ghost links
-        .map((a) => ({ title: (a.textContent || '').trim(), href: a.getAttribute('href') || '' }))
-    ).catch(() => []);
-
-    for (const t of pageThreads) {
-      if (t.href) threads.push({ title: t.title, url: abs(t.href) });
+// ============================================================
+// КОНФИГУРАЦИЯ СЕРВЕРОВ
+// ============================================================
+const SERVERS = [
+    {
+        id: 'new_york',
+        name: 'New York',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'detroit',
+        name: 'Detroit',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'chicago',
+        name: 'Chicago',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'san_francisco',
+        name: 'San Francisco',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'atlanta',
+        name: 'Atlanta',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'san_diego',
+        name: 'San Diego',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'los_angeles',
+        name: 'Los Angeles',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'miami',
+        name: 'Miami',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'las_vegas',
+        name: 'Las Vegas',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'washington',
+        name: 'Washington',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'dallas',
+        name: 'Dallas',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'boston',
+        name: 'Boston',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'houston',
+        name: 'Houston',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'seattle',
+        name: 'Seattle',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'phoenix',
+        name: 'Phoenix',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'denver',
+        name: 'Denver',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'portland',
+        name: 'Portland',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'orlando',
+        name: 'Orlando',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    },
+    {
+        id: 'memphis',
+        name: 'Memphis',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
     }
+];
 
-    const nextHref = await page
-      .$eval('.pageNav-jump--next', (a) => a.getAttribute('href'))
-      .catch(() => null);
-    pageUrl = nextHref ? abs(nextHref) : null;
-    if (pageUrl) await sleep(REQUEST_DELAY_MS);
-  }
+// ============================================================
+// КЛЮЧЕВЫЕ СЛОВА ДЛЯ ПОИСКА ТЕМ ПО ЗАГОЛОВКАМ
+// ============================================================
+const CODEX_KEYWORDS = {
+    uk: ['уголовный кодекс'],
+    ak: ['административный кодекс'],
+    pk: ['процессуальный кодекс'],
+    dk: ['дорожный кодекс']
+};
 
-  return threads;
-}
+const SELECTORS = {
+    threadLink: '.structItem-title a, a[data-preview]',
+    content: '.message-body .bbWrapper, .bbWrapper, .messageContent'
+};
+
+// ============================================================
+// ОСНОВНЫЕ ФУНКЦИИ
+// ============================================================
 
 function detectCodexType(title) {
-  for (const [key, def] of Object.entries(CODEX_TYPES)) {
-    if (def.pattern.test(title)) return key;
-  }
-  return null;
+    const lower = title.toLowerCase();
+    for (const [type, keywords] of Object.entries(CODEX_KEYWORDS)) {
+        for (const keyword of keywords) {
+            if (lower.includes(keyword)) {
+                return type;
+            }
+        }
+    }
+    return null;
 }
 
-// Extract plain text from the first (author) post of a thread, converting
-// block-level HTML into newlines so parse.js sees one "line" per element.
-async function extractThreadText(page, threadUrl) {
-  let combined = '';
-  let pageUrl = threadUrl;
-  let pages = 0;
+async function findCodexThreads(page, sectionUrl) {
+    console.log(`🔍 Ищем темы с кодексами в разделе: ${sectionUrl}`);
+    
+    await page.goto(sectionUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.waitForSelector(SELECTORS.threadLink, { timeout: 30000 });
 
-  while (pageUrl && pages < MAX_THREAD_PAGES) {
-    pages += 1;
-    await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-
-    const text = await page
-      .$eval('.message-body .bbWrapper', (el) => {
-        const clone = el.cloneNode(true);
-        clone.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
-        clone.querySelectorAll('p, div, li').forEach((node) => {
-          node.appendChild(document.createTextNode('\n'));
+    const threads = await page.evaluate((selector) => {
+        const results = [];
+        document.querySelectorAll(selector).forEach(el => {
+            const href = el.getAttribute('href');
+            const title = el.innerText.trim();
+            if (href && title) {
+                const fullUrl = href.startsWith('http') ? href : `https://forum.majestic-rp.ru${href}`;
+                results.push({ url: fullUrl, title });
+            }
         });
-        return clone.textContent || '';
-      })
-      .catch(() => '');
+        return results;
+    }, SELECTORS.threadLink);
 
-    combined += `\n${text}`;
-
-    // Only the first page of a law thread is normally needed (subsequent
-    // pages are usually discussion/replies, not more articles), so stop
-    // unless this looks like a continuation ("продолжение") thread.
-    break;
-  }
-
-  return combined;
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
-
-async function scrapeServer(browser, server) {
-  const page = await browser.newPage();
-  page.setDefaultNavigationTimeout(45000);
-  const result = { server: server.key, ok: false, codexesFound: [], error: null };
-
-  try {
-    log(`[${server.key}] resolving law subforum...`);
-    const subforumUrl = await resolveLawSubforumUrl(page, server);
-    if (!subforumUrl) throw new Error('law subforum not found (discovery failed)');
-    log(`[${server.key}] subforum: ${subforumUrl}`);
-
-    await sleep(REQUEST_DELAY_MS);
-    const threads = await listThreads(page, subforumUrl);
-    log(`[${server.key}] found ${threads.length} threads`);
-
-    const serverDir = path.join(OUTPUT_DIR, server.key);
-    fs.mkdirSync(serverDir, { recursive: true });
-
+    const found = {};
     for (const thread of threads) {
-      const codexKey = detectCodexType(thread.title);
-      if (!codexKey) continue;
-
-      log(`[${server.key}] parsing ${codexKey}: "${thread.title}"`);
-      await sleep(REQUEST_DELAY_MS);
-
-      let articles = [];
-      try {
-        const rawText = await extractThreadText(page, thread.url);
-        articles = parseCodexText(rawText);
-      } catch (err) {
-        log(`[${server.key}] WARN failed to parse ${codexKey}: ${err.message}`);
-        continue; // one bad codex shouldn't stop the others
-      }
-
-      const outFile = path.join(serverDir, `${codexKey}.json`);
-      const previous = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : null;
-
-      const newData = {
-        server: server.key,
-        serverName: server.ru,
-        codexType: codexKey,
-        title: thread.title,
-        sourceUrl: thread.url,
-        lastUpdate: new Date().toISOString(),
-        articles,
-      };
-
-      const previousBodyHash = previous ? hash(JSON.stringify(JSON.parse(previous).articles)) : null;
-      const newBodyHash = hash(JSON.stringify(articles));
-
-      if (!FORCE_UPDATE && previousBodyHash === newBodyHash) {
-        log(`[${server.key}] ${codexKey}: no changes, skipping write`);
-        result.codexesFound.push({ codex: codexKey, changed: false, articles: articles.length });
-        continue;
-      }
-
-      fs.writeFileSync(outFile, JSON.stringify(newData, null, 2), 'utf8');
-      log(`[${server.key}] ${codexKey}: wrote ${articles.length} articles`);
-      result.codexesFound.push({ codex: codexKey, changed: true, articles: articles.length });
+        const type = detectCodexType(thread.title);
+        if (type && !found[type]) {
+            found[type] = { url: thread.url, title: thread.title };
+            console.log(`✅ Найден ${type.toUpperCase()}: "${thread.title}"`);
+        }
     }
 
-    result.ok = true;
-  } catch (err) {
-    result.error = err.message;
-    log(`[${server.key}] ERROR: ${err.message}`);
-  } finally {
-    await page.close().catch(() => {});
-  }
-
-  return result;
+    return found;
 }
 
-async function main() {
-  const servers = ONLY_SERVER ? SERVERS.filter((s) => s.key === ONLY_SERVER) : SERVERS;
-  if (servers.length === 0) {
-    console.error(`Unknown --server value: ${ONLY_SERVER}`);
-    process.exit(1);
-  }
+async function scrapeThread(page, url) {
+    try {
+        console.log(`📖 Парсинг: ${url}`);
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+        await page.waitForSelector(SELECTORS.content, { timeout: 30000 });
 
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+        const text = await page.evaluate((selector) => {
+            const el = document.querySelector(selector);
+            if (!el) return null;
+            const clone = el.cloneNode(true);
+            clone.querySelectorAll('blockquote, .bbCodeBlock--quote, .quoteContainer').forEach(q => q.remove());
+            return clone.innerText.trim();
+        }, SELECTORS.content);
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
-
-  const report = {
-    runAt: new Date().toISOString(),
-    forceUpdate: FORCE_UPDATE,
-    servers: [],
-  };
-
-  try {
-    for (const server of servers) {
-      const result = await scrapeServer(browser, server);
-      report.servers.push(result);
+        return text;
+    } catch (e) {
+        console.error(`❌ Ошибка парсинга ${url}: ${e.message}`);
+        return null;
     }
-  } finally {
-    await browser.close();
-  }
-
-  fs.writeFileSync(path.join(OUTPUT_DIR, 'report.json'), JSON.stringify(report, null, 2), 'utf8');
-
-  const failed = report.servers.filter((s) => !s.ok);
-  const changed = report.servers.some((s) => s.codexesFound.some((c) => c.changed));
-  log(`Done. ${report.servers.length - failed.length}/${report.servers.length} servers OK. Changes: ${changed}`);
-  if (failed.length) {
-    log('Failed servers:', failed.map((s) => `${s.server} (${s.error})`).join(', '));
-  }
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+async function scrapeServer(server) {
+    console.log(`\n🌐 Обработка сервера: ${server.name} (${server.id})`);
+    console.log(`🔗 Раздел с законами: ${server.url}`);
+
+    const serverDir = path.join(__dirname, '../data', server.id);
+    if (!fs.existsSync(serverDir)) {
+        fs.mkdirSync(serverDir, { recursive: true });
+    }
+
+    const browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    try {
+        const page = await browser.newPage();
+        await page.setUserAgent(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        );
+
+        const found = await findCodexThreads(page, server.url);
+
+        const codexTypes = ['uk', 'ak', 'pk', 'dk'];
+        const results = {};
+
+        for (const type of codexTypes) {
+            const thread = found[type];
+            if (!thread) {
+                console.log(`⚠️ ${type.toUpperCase()} не найден в разделе`);
+                results[type] = { success: false, error: 'Не найдено' };
+                continue;
+            }
+
+            const text = await scrapeThread(page, thread.url);
+            if (text) {
+                const articles = parseCodex(text);
+                const output = {
+                    server: server.id,
+                    serverName: server.name,
+                    codexType: type,
+                    title: thread.title,
+                    url: thread.url,
+                    lastUpdate: new Date().toISOString(),
+                    articles: articles,
+                    totalArticles: articles.length
+                };
+
+                const filePath = path.join(serverDir, `${type}.json`);
+                fs.writeFileSync(filePath, JSON.stringify(output, null, 2));
+                console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей)`);
+                results[type] = { success: true, articles: articles.length };
+            } else {
+                console.log(`❌ ${type.toUpperCase()} не удалось спарсить`);
+                results[type] = { success: false, error: 'Ошибка парсинга' };
+            }
+        }
+
+        return results;
+
+    } finally {
+        await browser.close();
+    }
+}
+
+async function scrapeAllServers() {
+    const results = {};
+
+    for (const server of SERVERS) {
+        try {
+            results[server.id] = await scrapeServer(server);
+        } catch (e) {
+            console.error(`❌ Критическая ошибка на сервере ${server.id}:`, e.message);
+            results[server.id] = { error: e.message };
+        }
+    }
+
+    const reportPath = path.join(__dirname, '../data', 'report.json');
+    const report = {
+        timestamp: new Date().toISOString(),
+        servers: Object.keys(results).map(id => ({
+            id,
+            status: results[id].error ? 'error' : 'success',
+            details: results[id]
+        }))
+    };
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+    console.log(`\n📊 Отчёт сохранён в ${reportPath}`);
+
+    return results;
+}
+
+// ============================================================
+// ЗАПУСК
+// ============================================================
+if (require.main === module) {
+    const isTest = process.argv.includes('--test');
+
+    if (isTest) {
+        console.log('🧪 Тестовый режим');
+        const testServer = SERVERS.find(s => s.id === 'orlando');
+        if (testServer) {
+            scrapeServer(testServer).then(console.log).catch(console.error);
+        } else {
+            console.log('❌ Сервер Orlando не найден в конфиге');
+        }
+    } else {
+        scrapeAllServers().then(console.log).catch(console.error);
+    }
+}
+
+module.exports = { scrapeServer, scrapeAllServers, SERVERS };
