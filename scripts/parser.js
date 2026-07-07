@@ -24,7 +24,7 @@ const INLINE_PUNISHMENT_RE = /Наказание[:\s]+([^\n]*)$/i;
 
 // ========== ОСНОВНАЯ ФУНКЦИЯ ==========
 
-function parseCodex(rawText) {
+function parserCodex(rawText) {
   // Нормализуем текст
   const lines = rawText
     .replace(/\r\n/g, '\n')
@@ -305,7 +305,7 @@ async function main() {
       const rawText = await fetchForumPage(url);
 
       // 2. Парсим
-      const articles = parseCodex(rawText);
+      const articles = parserCodex(rawText);
 
       // 3. Сохраняем
       saveToJson(articles, type, titles[type], url);
@@ -323,4 +323,4 @@ if (require.main === module) {
   main().catch(console.error);
 }
 
-module.exports = { parseCodex, cleanText, saveToJson, fetchForumPage };
+module.exports = { parserCodex, cleanText, saveToJson, fetchForumPage };
