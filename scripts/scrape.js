@@ -10,104 +10,20 @@ const { parseCodex } = require('./parser.js');
 // ============================================================
 const SERVERS = [
     {
-        id: 'new_york',
-        name: 'New York',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'detroit',
-        name: 'Detroit',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'chicago',
-        name: 'Chicago',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'san_francisco',
-        name: 'San Francisco',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'atlanta',
-        name: 'Atlanta',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'san_diego',
-        name: 'San Diego',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'los_angeles',
-        name: 'Los Angeles',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'miami',
-        name: 'Miami',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'las_vegas',
-        name: 'Las Vegas',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'washington',
-        name: 'Washington',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'dallas',
-        name: 'Dallas',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'boston',
-        name: 'Boston',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'houston',
-        name: 'Houston',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'seattle',
-        name: 'Seattle',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'phoenix',
-        name: 'Phoenix',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'denver',
-        name: 'Denver',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
-        id: 'portland',
-        name: 'Portland',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    },
-    {
         id: 'orlando',
         name: 'Orlando',
         url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
     },
-    {
-        id: 'memphis',
-        name: 'Memphis',
-        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    }
+    // ДОБАВЛЯЙ ДРУГИЕ СЕРВЕРЫ СЮДА
+    // {
+    //     id: 'new_york',
+    //     name: 'New York',
+    //     url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    // }
 ];
 
 // ============================================================
-// КЛЮЧЕВЫЕ СЛОВА ДЛЯ ПОИСКА ТЕМ ПО ЗАГОЛОВКАМ
+// КЛЮЧЕВЫЕ СЛОВА ДЛЯ ПОИСКА ТЕМ
 // ============================================================
 const CODEX_KEYWORDS = {
     uk: ['уголовный кодекс'],
@@ -264,6 +180,22 @@ async function scrapeAllServers() {
             console.error(`❌ Критическая ошибка на сервере ${server.id}:`, e.message);
             results[server.id] = { error: e.message };
         }
+    }
+
+    // СОЗДАЁМ .last-run.json ДАЖЕ ЕСЛИ НИЧЕГО НЕ НАШЛИ
+    const lastRunFile = path.join(__dirname, '../data', '.last-run.json');
+    try {
+        fs.mkdirSync(path.dirname(lastRunFile), { recursive: true });
+        fs.writeFileSync(lastRunFile, JSON.stringify({
+            lastRun: new Date().toISOString(),
+            servers: Object.keys(results).map(id => ({
+                id,
+                status: results[id].error ? 'error' : 'success'
+            }))
+        }, null, 2));
+        console.log(`✅ .last-run.json создан`);
+    } catch(e) {
+        console.log('⚠️ Не удалось создать .last-run.json');
     }
 
     const reportPath = path.join(__dirname, '../data', 'report.json');
