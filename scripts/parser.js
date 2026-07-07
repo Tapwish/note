@@ -1,205 +1,236 @@
-const puppeteer = require('puppeteer');
-const cheerio = require('cheerio');
 const fs = require('fs');
+const https = require('https');
 
 // ============================================================
 // 1. ЗАГРУЗКА HTML
 // ============================================================
 
-async function fetchForumHtml(url) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+function fetchHtml(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(data));
+      res.on('error', reject);
+    }).on('error', reject);
   });
-  const page = await browser.newPage();
-
-  console.log(`📥 Загрузка: ${url}`);
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-
-  await page.waitForSelector('.message-content', { timeout: 10000 });
-
-  const html = await page.evaluate(() => {
-    const messages = document.querySelectorAll('.message-content');
-    return Array.from(messages)
-      .map(msg => msg.innerHTML || '')
-      .join('\n');
-  });
-
-  await browser.close();
-  return html;
 }
 
 // ============================================================
-// 2. ПАРСИНГ HTML → СТАТЬИ
+// 2. ИЗВЛЕЧЕНИЕ ТЕКСТА ИЗ HTML
 // ============================================================
 
-function parseHtmlToArticles(html) {
-  const $ = cheerio.load(html);
+function extractText(html) {
+  const messages = [];
+  let start = 0;
+  while (true) {
+    const open = html.indexOf('<div class="message-content"', start);
+    if (open === -1) break;
+    const close = html.indexOf('</div>', open);
+    if (close === -1) break;
+    let content = html.substring(open, close);
+    content = content.replace(/<[^>]*>/g, ' ');
+    content = content.replace(/\s+/g, ' ').trim();
+    if (content) messages.push(content);
+    start = close + 1;
+  }
+  return messages.join('\n');
+}
+
+// ============================================================
+// 3. ПАРСИНГ В JSON (с sections, chapters, articles, parts)
+// ============================================================
+
+function parseLawWithSections(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
-  const articles = [];
-  let current = null;
-  let parts = [];
+  const sections = [];
+  let currentSection = null;
+  let currentChapter = null;
+  let currentArticle = null;
+  let currentParts = [];
   let buffer = [];
-  let currentPartNum = 0;
 
-  $('body *').each((i, el) => {
-    const text = $(el).text().trim();
-    if (!text) return;
+  // === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 
-    const articleMatch = text.match(/^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
-    if (articleMatch) {
-      if (current) {
-        finishArticle();
-      }
+  function cleanText(t) {
+    return t.replace(/\s+/g, ' ').trim();
+  }
 
-      current = {
-        number: articleMatch[1],
-        title: articleMatch[2] || 'Без названия',
-        parts: []
-      };
-      parts = [];
+  function extractPunishment(t) {
+    const match = t.match(/Наказание[:\s]+([^\n]*)/i);
+    return match ? match[1].trim() : null;
+  }
+
+  function removePunishment(t) {
+    return t.replace(/Наказание[:\s]+[^\n]*/i, '').trim();
+  }
+
+  function savePart() {
+    if (currentParts.length > 0 && buffer.length > 0) {
+      const partText = cleanText(buffer.join(' '));
+      const punishment = extractPunishment(partText);
+      currentParts.push({
+        id: `ч. ${currentParts.length + 1}`,
+        text: punishment ? `${removePunishment(partText)} Наказание: ${punishment}` : removePunishment(partText)
+      });
       buffer = [];
-      currentPartNum = 0;
-      return;
     }
+  }
 
-    if (!current) return;
-
-    const partMatch = text.match(/^ч\.?\s*(\d+)\s*[.)]?\s*/i);
-    if (partMatch) {
-      if (parts.length > 0 && buffer.length > 0) {
-        const lastPart = parts[parts.length - 1];
-        lastPart.text = cleanText(buffer.join(' '));
-        const punishment = extractPunishment(lastPart.text);
+  function saveArticle() {
+    if (currentArticle) {
+      // Если есть буфер, но нет частей — создаём ч. 1
+      if (currentParts.length === 0 && buffer.length > 0) {
+        const partText = cleanText(buffer.join(' '));
+        const punishment = extractPunishment(partText);
+        currentParts.push({
+          id: 'ч. 1',
+          text: punishment ? `${removePunishment(partText)} Наказание: ${punishment}` : removePunishment(partText)
+        });
+        buffer = [];
+      }
+      // Если есть буфер и есть части — добавляем к последней части
+      if (buffer.length > 0 && currentParts.length > 0) {
+        const lastPart = currentParts[currentParts.length - 1];
+        const extraText = cleanText(buffer.join(' '));
+        const punishment = extractPunishment(extraText);
         if (punishment) {
-          lastPart.text = removePunishment(lastPart.text);
-          lastPart.punishment = punishment;
+          lastPart.text = `${lastPart.text} ${removePunishment(extraText)} Наказание: ${punishment}`;
+        } else {
+          lastPart.text = `${lastPart.text} ${extraText}`;
         }
         buffer = [];
       }
+      // Если нет частей и нет буфера — создаём заглушку
+      if (currentParts.length === 0) {
+        currentParts.push({
+          id: 'ч. 1',
+          text: currentArticle.title || 'Нет текста'
+        });
+      }
+      currentArticle.parts = currentParts;
+      currentChapter.articles.push(currentArticle);
+      currentArticle = null;
+      currentParts = [];
+    }
+  }
 
-      currentPartNum = parseInt(partMatch[1]);
-      const restText = text.replace(partMatch[0], '').trim();
-      parts.push({
-        part: currentPartNum,
-        text: restText || '',
-        punishment: null
-      });
-      return;
+  function saveChapter() {
+    if (currentChapter) {
+      currentSection.chapters.push(currentChapter);
+      currentChapter = null;
+    }
+  }
+
+  function saveSection() {
+    if (currentSection) {
+      sections.push(currentSection);
+      currentSection = null;
+    }
+  }
+
+  // === ОСНОВНОЙ ЦИКЛ ===
+
+  for (const line of lines) {
+    // === НОВЫЙ РАЗДЕЛ ===
+    const sectionMatch = line.match(/^(?:Раздел|Глава)\s+([\dIVXLCDM]+)\.?\s*(.*)$/i);
+    if (sectionMatch && !line.match(/^Глава\s+[\dIVXLCDM]+/i)) {
+      saveArticle();
+      saveChapter();
+      saveSection();
+      
+      currentSection = {
+        id: sectionMatch[1],
+        title: sectionMatch[2] || '',
+        chapters: []
+      };
+      continue;
     }
 
-    const punishMatch = text.match(/^Наказание[:\s]+(.*)$/i);
-    if (punishMatch) {
+    // === НОВАЯ ГЛАВА ===
+    const chapterMatch = line.match(/^Глава\s+([\dIVXLCDM]+)\.?\s*(.*)$/i);
+    if (chapterMatch) {
+      saveArticle();
+      saveChapter();
+      
+      currentChapter = {
+        id: chapterMatch[1],
+        title: chapterMatch[2] || '',
+        articles: []
+      };
+      continue;
+    }
+
+    // === НОВАЯ СТАТЬЯ ===
+    const articleMatch = line.match(/^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
+    if (articleMatch) {
+      saveArticle();
+      
+      currentArticle = {
+        id: articleMatch[1],
+        title: articleMatch[2] || '',
+        parts: []
+      };
+      currentParts = [];
+      buffer = [];
+      continue;
+    }
+
+    // === НАКАЗАНИЕ ===
+    const punishMatch = line.match(/^Наказание[:\s]+(.*)$/i);
+    if (punishMatch && currentArticle) {
       const punishment = punishMatch[1].trim();
-      if (parts.length > 0) {
-        const lastPart = parts[parts.length - 1];
-        lastPart.punishment = punishment;
-        if (!lastPart.text) {
-          lastPart.text = `Наказание: ${punishment}`;
-        }
+      if (currentParts.length > 0) {
+        const lastPart = currentParts[currentParts.length - 1];
+        lastPart.text = `${lastPart.text} Наказание: ${punishment}`;
       } else {
         buffer.push(`Наказание: ${punishment}`);
       }
-      return;
+      continue;
     }
 
-    buffer.push(text);
-  });
-
-  if (current) {
-    finishArticle();
+    // === ОБЫЧНЫЙ ТЕКСТ ===
+    if (currentArticle) {
+      buffer.push(line);
+    }
   }
 
-  return articles;
+  // Сохраняем последние элементы
+  saveArticle();
+  saveChapter();
+  saveSection();
 
-  function finishArticle() {
-    if (buffer.length > 0 && parts.length === 0) {
-      const fullText = cleanText(buffer.join(' '));
-      const punishment = extractPunishment(fullText);
-      current.parts.push({
-        part: 1,
-        text: removePunishment(fullText),
-        punishment: punishment
-      });
-    } else if (parts.length > 0 && buffer.length > 0) {
-      const lastPart = parts[parts.length - 1];
-      const extraText = cleanText(buffer.join(' '));
-      if (extraText) {
-        const punishment = extractPunishment(extraText);
-        if (punishment) {
-          lastPart.punishment = lastPart.punishment || punishment;
-          lastPart.text = lastPart.text ? `${lastPart.text} ${removePunishment(extraText)}` : removePunishment(extraText);
-        } else {
-          lastPart.text = lastPart.text ? `${lastPart.text} ${extraText}` : extraText;
-        }
-      }
-    }
-
-    current.parts = parts.map(p => ({
-      part: p.part,
-      text: cleanText(p.text || 'Нет текста'),
-      punishment: p.punishment ? cleanText(p.punishment) : null
-    }));
-
-    if (current.parts.length === 0) {
-      current.parts.push({
-        part: 1,
-        text: current.title || 'Нет текста',
-        punishment: null
-      });
-    }
-
-    articles.push(current);
-    current = null;
-  }
-}
-
-function cleanText(text) {
-  if (!text) return '';
-  return text
-    .replace(/\s+/g, ' ')
-    .replace(/\s+([,.;:!?])/g, '$1')
-    .trim();
-}
-
-function extractPunishment(text) {
-  const match = text.match(/Наказание[:\s]+([^\n]*)/i);
-  return match ? cleanText(match[1]) : null;
-}
-
-function removePunishment(text) {
-  return text.replace(/Наказание[:\s]+[^\n]*/i, '').trim();
+  return { sections };
 }
 
 // ============================================================
-// 3. ЗАПУСК
+// 4. ЗАПУСК
 // ============================================================
 
 async function main() {
   const urls = {
-    uk: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
     pk: 'https://forum.majestic-rp.ru/threads/protsessual-nyi-kodeks-shtata-san-andreas.3232571/',
+    uk: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
     ak: 'https://forum.majestic-rp.ru/threads/administrativnyi-kodeks-shtata-san-andreas.3232568/',
     dk: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/'
   };
 
   const titles = {
-    uk: 'Уголовный кодекс штата San-Andreas',
     pk: 'Процессуальный кодекс штата San-Andreas',
+    uk: 'Уголовный кодекс штата San-Andreas',
     ak: 'Административный кодекс штата San-Andreas',
     dk: 'Дорожный кодекс штата San-Andreas'
   };
 
-  if (!fs.existsSync('orlando')) {
-    fs.mkdirSync('orlando');
-  }
-
   for (const [type, url] of Object.entries(urls)) {
     try {
-      console.log(`\n📌 ${type.toUpperCase()} — загрузка...`);
-      const html = await fetchForumHtml(url);
-      const articles = parseHtmlToArticles(html);
+      console.log(`📥 Загрузка ${type}...`);
+      const html = await fetchHtml(url);
+      const text = extractText(html);
+      const data = parseLawWithSections(text);
       
+      // Добавляем метаданные
       const result = {
         server: 'orlando',
         serverName: 'Orlando',
@@ -207,18 +238,18 @@ async function main() {
         title: titles[type],
         url: url,
         lastUpdate: new Date().toISOString(),
-        articles: articles,
-        totalArticles: articles.length
+        ...data,
+        totalArticles: data.sections.reduce((acc, s) => {
+          return acc + s.chapters.reduce((acc2, c) => acc2 + c.articles.length, 0);
+        }, 0)
       };
 
-      fs.writeFileSync(`orlando/${type}.json`, JSON.stringify(result, null, 2));
-      console.log(`✅ orlando/${type}.json — ${articles.length} статей`);
+      fs.writeFileSync(`${type}.json`, JSON.stringify(result, null, 2));
+      console.log(`✅ ${type}.json — ${result.totalArticles} статей`);
     } catch (e) {
       console.error(`❌ ${type}: ${e.message}`);
     }
   }
-
-  console.log('\n✅ Готово!');
 }
 
 main().catch(console.error);
