@@ -29,7 +29,7 @@ jobs:
         run: npm install puppeteer
 
       - name: Run parser
-        run: node parser.js
+        run: node scripts/parser.js
 
       - name: Commit and push
         run: |
