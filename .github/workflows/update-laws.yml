@@ -19,7 +19,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -61,5 +60,3 @@ jobs:
             echo "❌ Не удалось запушить после нескольких попыток"
             exit 1
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
