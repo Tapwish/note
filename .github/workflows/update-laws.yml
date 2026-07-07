@@ -1,0 +1,46 @@
+name: Update Laws
+
+on:
+  schedule:
+    # Раз в 3 дня в 03:00 UTC. Формат cron: минута час день(месяца) месяц день(недели)
+    # "*/3" в поле дня месяца означает "каждый 3-й день месяца" - это НЕ то же самое,
+    # что "раз в 3 дня" (интервалы дня месяца не переносятся между месяцами).
+    # Если нужна точная периодичность "каждые 3 дня" - проще ставить ежедневный
+    # cron и внутри скрипта проверять дату последнего обновления (см. scrape.js).
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}   # позволяет запустить вручную кнопкой "Run workflow"
+
+permissions:
+  contents: write         # обязательно, иначе бот не сможет запушить изменения
+
+jobs:
+  update-laws:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run scraper
+        run: node scripts/scrape.js
+        env:
+          FORCE_UPDATE: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "law-bot"
+          git config user.email "law-bot@users.noreply.github.com"
+          git add data/*.json data/.last-run.json
+          if git diff --cached --quiet; then
+            echo "Изменений нет, коммит не нужен"
+          else
+            git commit -m "chore: автообновление законов $(date -u +%Y-%m-%d)"
+            git push
+          fi
