@@ -2,7 +2,7 @@ name: Update Laws
 
 on:
   schedule:
-    - cron: '0 0 */3 * *'  # каждые 3 дня в 00:00
+    - cron: '0 0 */3 * *'
   workflow_dispatch:
 
 permissions:
@@ -23,15 +23,31 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Create parser.js in root
+        run: |
+          if [ -f scripts/parser.js ]; then
+            cp scripts/parser.js parser.js
+            echo "✅ Парсер скопирован в корень"
+          elif [ -f parser.js ]; then
+            echo "✅ Парсер уже в корне"
+          else
+            echo "❌ Парсер не найден!"
+            exit 1
+          fi
+
       - name: Run parser
-        run: node scripts/parser.js
+        run: node parser.js
 
       - name: Commit and push changes
         run: |
           git config user.name "law-bot"
           git config user.email "law-bot@users.noreply.github.com"
           
+          # === НОВЫЕ СТРОКИ ===
+          git stash push --include-untracked -m "auto-stash before pull"
           git pull --rebase origin main
+          git stash pop || true
+          # === КОНЕЦ НОВЫХ СТРОК ===
           
           git add uk.json pk.json ak.json dk.json
           
