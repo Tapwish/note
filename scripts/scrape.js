@@ -7,7 +7,7 @@ const { parseCodexText, parseDkText } = require('./parser');
 const CODICES = [
     {
         tab: 'uk',
-        url: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/',
+        url: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
         outFile: 'data/uk.json'
     },
     {
