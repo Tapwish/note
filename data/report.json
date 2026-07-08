@@ -1,5 +1,6 @@
 {
-  "timestamp": "2026-07-08T09:38:03.905Z",
+  "timestamp": "2026-07-08T09:44:13.709Z",
+  "duration": 14.6,
   "servers": [
     {
       "id": "orlando",
@@ -7,23 +8,27 @@
       "details": {
         "uk": {
           "success": true,
-          "articles": 77,
-          "penaltyArticles": 33
+          "totalArticles": 1,
+          "penaltyCount": 0,
+          "theoryLines": 274
         },
         "ak": {
           "success": true,
-          "articles": 39,
-          "penaltyArticles": 8
+          "totalArticles": 1,
+          "penaltyCount": 0,
+          "theoryLines": 209
         },
         "pk": {
           "success": true,
-          "articles": 101,
-          "penaltyArticles": 96
+          "totalArticles": 1,
+          "penaltyCount": 0,
+          "theoryLines": 424
         },
         "dk": {
           "success": true,
-          "articles": 67,
-          "penaltyArticles": 0
+          "totalArticles": 1,
+          "penaltyCount": 1,
+          "theoryLines": 0
         }
       }
     }
