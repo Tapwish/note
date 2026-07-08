@@ -5,19 +5,14 @@ const fs = require('fs');
 const path = require('path');
 const { parseCodex } = require('./parser.js');
 
-// ============================================================
-// ГАРАНТИРОВАННОЕ СОЗДАНИЕ ПАПКИ data/
-// ============================================================
 const DATA_DIR = path.join(__dirname, '../data');
 try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     console.log('✅ Папка data/ создана');
-} catch(e) {
-    console.log('⚠️ Не удалось создать папку data/');
-}
+} catch(e) {}
 
 // ============================================================
-// КОНФИГУРАЦИЯ СЕРВЕРОВ
+// КОНФИГУРАЦИЯ
 // ============================================================
 const SERVERS = [
     {
@@ -25,17 +20,8 @@ const SERVERS = [
         name: 'Orlando',
         url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
     }
-    // ===== ДЛЯ ДОБАВЛЕНИЯ ДРУГИХ СЕРВЕРОВ =====
-    // {
-    //     id: 'new_york',
-    //     name: 'New York',
-    //     url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
-    // }
 ];
 
-// ============================================================
-// КЛЮЧЕВЫЕ СЛОВА ДЛЯ ПОИСКА ТЕМ
-// ============================================================
 const CODEX_KEYWORDS = {
     uk: ['уголовный кодекс'],
     ak: ['административный кодекс'],
@@ -97,11 +83,24 @@ async function findCodexThreads(page, sectionUrl) {
 
 async function scrapeThread(page, url) {
     try {
-        console.log(`📖 Парсинг: ${url}`);
+        console.log(`📖 Парсинг HTML: ${url}`);
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         await page.waitForSelector(SELECTORS.content, { timeout: 30000 });
 
-        const text = await page.evaluate((selector) => {
+        // ===== ИЗВЛЕКАЕМ HTML =====
+        const htmlContent = await page.evaluate((selector) => {
+            const el = document.querySelector(selector);
+            if (!el) return null;
+            // Клонируем, чтобы не менять оригинальный DOM
+            const clone = el.cloneNode(true);
+            // Убираем цитаты, но оставляем остальной HTML
+            clone.querySelectorAll('blockquote, .bbCodeBlock--quote, .quoteContainer').forEach(q => q.remove());
+            // Возвращаем ВЕСЬ HTML
+            return clone.innerHTML;
+        }, SELECTORS.content);
+
+        // Также получаем текст для отладки
+        const textContent = await page.evaluate((selector) => {
             const el = document.querySelector(selector);
             if (!el) return null;
             const clone = el.cloneNode(true);
@@ -109,9 +108,10 @@ async function scrapeThread(page, url) {
             return clone.innerText.trim();
         }, SELECTORS.content);
 
-        return text;
+        return { html: htmlContent, text: textContent };
+
     } catch (e) {
-        console.error(`❌ Ошибка: ${e.message}`);
+        console.error(`❌ Ошибка парсинга ${url}: ${e.message}`);
         return null;
     }
 }
@@ -145,9 +145,12 @@ async function scrapeServer(server) {
                 continue;
             }
 
-            const text = await scrapeThread(page, thread.url);
-            if (text) {
-                const articles = parseCodex(text);
+            const content = await scrapeThread(page, thread.url);
+            if (content && content.html) {
+                // Парсим HTML для извлечения статей
+                const articles = parseCodex(content.html);
+                
+                // Сохраняем ФУЛЛ HTML и структуру
                 const output = {
                     server: server.id,
                     serverName: server.name,
@@ -155,13 +158,16 @@ async function scrapeServer(server) {
                     title: thread.title,
                     url: thread.url,
                     lastUpdate: new Date().toISOString(),
+                    // ===== ВАЖНО: СОХРАНЯЕМ ПОЛНЫЙ HTML =====
+                    htmlContent: content.html,
+                    textContent: content.text,
                     articles: articles,
                     totalArticles: articles.length
                 };
 
                 const filePath = path.join(serverDir, `${type}.json`);
                 fs.writeFileSync(filePath, JSON.stringify(output, null, 2));
-                console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей)`);
+                console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей, ${content.html.length} символов HTML)`);
                 results[type] = { success: true, articles: articles.length };
             } else {
                 console.log(`❌ ${type.toUpperCase()} не спарсен`);
