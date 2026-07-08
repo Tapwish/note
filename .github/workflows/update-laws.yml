@@ -46,10 +46,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libnss3 libatk-bridge2.0-0 libx11-xcomposite1 libxcomposite1 \
-            libxdamage1 libxrandr2 libgbm1 libasound2 libpangocairo-1.0-0 \
-            libpango-1.0-0 libatk1.0-0 libcups2 libxss1 libxtst6 \
-            fonts-liberation libappindicator3-1 xdg-utils
+            libnss3 libatk-bridge2.0-0 libxcomposite1 \
+            libxdamage1 libxrandr2 libgbm1 libasound2t64 libpangocairo-1.0-0 \
+            libpango-1.0-0 libatk1.0-0t64 libcups2t64 libxss1 libxtst6 \
+            libx11-6 libxext6 libxfixes3 \
+            fonts-liberation xdg-utils
 
       - name: Запуск скрапера
         run: npm run scrape
