@@ -6,18 +6,18 @@ const path = require('path');
 const { parseCodex } = require('./parser.js');
 
 // ============================================================
-// ГАРАНТИРОВАННОЕ СОЗДАНИЕ ПАПКИ data/ ПРИ ЗАПУСКЕ
+// ГАРАНТИРОВАННОЕ СОЗДАНИЕ ПАПКИ data/
 // ============================================================
 const DATA_DIR = path.join(__dirname, '../data');
 try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    console.log('✅ Папка data/ создана (или уже существует)');
+    console.log('✅ Папка data/ создана');
 } catch(e) {
     console.log('⚠️ Не удалось создать папку data/');
 }
 
 // ============================================================
-// КОНФИГУРАЦИЯ СЕРВЕРОВ — ТОЛЬКО ORLANDO
+// КОНФИГУРАЦИЯ СЕРВЕРОВ
 // ============================================================
 const SERVERS = [
     {
@@ -25,7 +25,7 @@ const SERVERS = [
         name: 'Orlando',
         url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
     }
-    // ===== ДЛЯ ДОБАВЛЕНИЯ ДРУГИХ СЕРВЕРОВ РАСКОММЕНТИРУЙ И ЗАМЕНИ ССЫЛКИ =====
+    // ===== ДЛЯ ДОБАВЛЕНИЯ ДРУГИХ СЕРВЕРОВ =====
     // {
     //     id: 'new_york',
     //     name: 'New York',
@@ -49,7 +49,7 @@ const SELECTORS = {
 };
 
 // ============================================================
-// ОСНОВНЫЕ ФУНКЦИИ
+// ФУНКЦИИ
 // ============================================================
 
 function detectCodexType(title) {
@@ -65,7 +65,7 @@ function detectCodexType(title) {
 }
 
 async function findCodexThreads(page, sectionUrl) {
-    console.log(`🔍 Ищем темы с кодексами в разделе: ${sectionUrl}`);
+    console.log(`🔍 Ищем темы в разделе: ${sectionUrl}`);
     
     await page.goto(sectionUrl, { waitUntil: 'networkidle2', timeout: 60000 });
     await page.waitForSelector(SELECTORS.threadLink, { timeout: 30000 });
@@ -111,19 +111,16 @@ async function scrapeThread(page, url) {
 
         return text;
     } catch (e) {
-        console.error(`❌ Ошибка парсинга ${url}: ${e.message}`);
+        console.error(`❌ Ошибка: ${e.message}`);
         return null;
     }
 }
 
 async function scrapeServer(server) {
-    console.log(`\n🌐 Обработка сервера: ${server.name} (${server.id})`);
-    console.log(`🔗 Раздел с законами: ${server.url}`);
+    console.log(`\n🌐 Обработка: ${server.name} (${server.id})`);
 
     const serverDir = path.join(DATA_DIR, server.id);
-    if (!fs.existsSync(serverDir)) {
-        fs.mkdirSync(serverDir, { recursive: true });
-    }
+    fs.mkdirSync(serverDir, { recursive: true });
 
     const browser = await puppeteer.launch({
         headless: 'new',
@@ -138,15 +135,13 @@ async function scrapeServer(server) {
         );
 
         const found = await findCodexThreads(page, server.url);
-
-        const codexTypes = ['uk', 'ak', 'pk', 'dk'];
         const results = {};
 
-        for (const type of codexTypes) {
+        for (const type of ['uk', 'ak', 'pk', 'dk']) {
             const thread = found[type];
             if (!thread) {
-                console.log(`⚠️ ${type.toUpperCase()} не найден в разделе`);
-                results[type] = { success: false, error: 'Не найдено' };
+                console.log(`⚠️ ${type.toUpperCase()} не найден`);
+                results[type] = { success: false };
                 continue;
             }
 
@@ -169,8 +164,8 @@ async function scrapeServer(server) {
                 console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей)`);
                 results[type] = { success: true, articles: articles.length };
             } else {
-                console.log(`❌ ${type.toUpperCase()} не удалось спарсить`);
-                results[type] = { success: false, error: 'Ошибка парсинга' };
+                console.log(`❌ ${type.toUpperCase()} не спарсен`);
+                results[type] = { success: false };
             }
         }
 
@@ -188,14 +183,12 @@ async function scrapeAllServers() {
         try {
             results[server.id] = await scrapeServer(server);
         } catch (e) {
-            console.error(`❌ Критическая ошибка на сервере ${server.id}:`, e.message);
+            console.error(`❌ Ошибка на ${server.id}:`, e.message);
             results[server.id] = { error: e.message };
         }
     }
 
-    // ============================================================
-    // ГАРАНТИРОВАННОЕ СОЗДАНИЕ .last-run.json
-    // ============================================================
+    // .last-run.json
     const lastRunFile = path.join(DATA_DIR, '.last-run.json');
     try {
         fs.writeFileSync(lastRunFile, JSON.stringify({
@@ -205,21 +198,12 @@ async function scrapeAllServers() {
                 status: results[id].error ? 'error' : 'success'
             }))
         }, null, 2));
-        console.log(`✅ .last-run.json создан`);
+        console.log('✅ .last-run.json создан');
     } catch(e) {
-        console.log('⚠️ Не удалось создать .last-run.json:', e.message);
-        // СОЗДАЁМ МИНИМАЛЬНЫЙ ФАЙЛ, ЧТОБЫ GIT НЕ ПАДАЛ
-        try {
-            fs.writeFileSync(lastRunFile, JSON.stringify({ lastRun: new Date().toISOString() }));
-            console.log('✅ .last-run.json создан (минимальная версия)');
-        } catch(e2) {
-            console.log('❌ Критическая ошибка: не удалось создать .last-run.json');
-        }
+        console.log('⚠️ .last-run.json не создан');
     }
 
-    // ============================================================
-    // ОТЧЁТ
-    // ============================================================
+    // report.json
     const reportPath = path.join(DATA_DIR, 'report.json');
     const report = {
         timestamp: new Date().toISOString(),
@@ -229,12 +213,8 @@ async function scrapeAllServers() {
             details: results[id]
         }))
     };
-    try {
-        fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-        console.log(`\n📊 Отчёт сохранён в ${reportPath}`);
-    } catch(e) {
-        console.log('⚠️ Не удалось сохранить отчёт');
-    }
+    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+    console.log(`\n📊 Отчёт: ${reportPath}`);
 
     return results;
 }
@@ -246,15 +226,13 @@ if (require.main === module) {
     const isTest = process.argv.includes('--test');
 
     if (isTest) {
-        console.log('🧪 Тестовый режим');
+        console.log('🧪 Тестовый режим (только Orlando)');
         const testServer = SERVERS.find(s => s.id === 'orlando');
         if (testServer) {
             scrapeServer(testServer).then(console.log).catch(console.error);
-        } else {
-            console.log('❌ Сервер Orlando не найден в конфиге');
         }
     } else {
-        scrapeAllServers().then(console.log).catch(console.error);
+        scrapeAllServers().catch(console.error);
     }
 }
 
