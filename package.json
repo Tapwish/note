@@ -1,36 +1,19 @@
 {
-  "name": "book-of-law",
+  "name": "majestic-codex-scraper",
   "version": "1.0.0",
-  "description": "Book of Law",
-  "main": "main.js",
+  "description": "Скрапер и парсер уголовного/административного/процессуального/дорожного кодекса форума Majestic (XenForo) в JSON",
+  "private": true,
+  "main": "scrape.js",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder"
-  },
-  "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.6.4"
+    "start": "node scrape.js",
+    "scrape": "node scrape.js",
+    "test": "node scrape.js --test"
   },
   "dependencies": {
-    "cheerio": "^1.0.0-rc.12",
-    "puppeteer": "^23.0.0"
+    "puppeteer": "^22.0.0"
   },
-  "build": {
-    "appId": "com.orlando.bookoflaw",
-    "productName": "Book of Law",
-    "directories": {
-      "output": "dist"
-    },
-    "win": {
-      "target": "nsis",
-      "icon": "icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Book of Law"
-    }
-  }
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED"
 }
