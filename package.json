@@ -1,19 +1,13 @@
 {
-  "name": "majestic-codex-scraper",
+  "name": "laws-parser",
   "version": "1.0.0",
-  "description": "Скрапер и парсер уголовного/административного/процессуального/дорожного кодекса форума Majestic (XenForo) в JSON",
-  "private": true,
-  "main": "scrape.js",
+  "description": "Автоматический парсер законов Majestic RP",
+  "main": "scripts/scrape.js",
   "scripts": {
-    "start": "node scrape.js",
-    "scrape": "node scrape.js",
-    "test": "node scrape.js --test"
+    "start": "node scripts/scrape.js",
+    "test": "node scripts/scrape.js --test"
   },
   "dependencies": {
-    "puppeteer": "^22.0.0"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "license": "UNLICENSED"
+    "puppeteer": "^22.15.0"
+  }
 }
