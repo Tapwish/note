@@ -1,255 +1,200 @@
-const fs = require('fs');
-const https = require('https');
+'use strict';
 
-// ============================================================
-// 1. ЗАГРУЗКА HTML
-// ============================================================
+/**
+ * Парсер уголовного/административного кодекса форума Majestic (XenForo).
+ *
+ * Работает НЕ построчно, а по всему тексту сразу — независимо от того, как
+ * именно отформатирован конкретный пост: с переносами строк или без них,
+ * со звёздами рейтинга/тегом или без, с "ч. N" или одним сплошным абзацем,
+ * с "Наказание:" на отдельной строке или вклеенным в конец предложения.
+ *
+ * Правило простое: как только в тексте встречается "Статья N" — начинается
+ * новая статья. Как только внутри неё (или её части) встречается
+ * "Наказание" — всё, что после него, уходит в punishment, а всё, что до
+ * него — в text. Больше никаких требований к разметке нет.
+ *
+ * Режимы работы:
+ *  - parseCodex(rawText)      — на вход обычный текст
+ *  - parseCodexFromHtml(html) — на вход сырой HTML сообщения(й) форума;
+ *    HTML сначала превращается в текст (htmlToText), а затем разбирается
+ *    той же логикой.
+ */
 
-function fetchHtml(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(data));
-      res.on('error', reject);
-    }).on('error', reject);
-  });
+// заголовок статьи: номер [+ звёзды рейтинга] [+ тег в скобках]
+const ARTICLE_HEADER_RE = /Статья\s+(\d+(?:\.\d+)*)\s*(★+)?\s*(?:\[([^\]]+)\])?/gi;
+// заголовок части: "ч. N" / "ч N" / "ч.N)" и т.п.
+const PART_HEADER_RE = /ч\.?\s*(\d+)\s*[.)]?/gi;
+// "Наказание", "Наказания", "Наказанием" и т.д., с любым разделителем после (":", "-", "—") или без него
+const PUNISHMENT_RE = /Наказани[а-яё]*\s*[:\-—]?\s*/gi;
+
+// символы, которые считаем допустимой границей перед словом-маркером
+// (начало текста или пробел/знак препинания перед ним)
+function isBoundary(str, idx) {
+  if (idx <= 0) return true;
+  return /[\s.,;:()\-—\n\r]/.test(str[idx - 1]);
 }
 
-// ============================================================
-// 2. ИЗВЛЕЧЕНИЕ ТЕКСТА ИЗ HTML
-// ============================================================
-
-function extractText(html) {
-  const messages = [];
-  let start = 0;
-  while (true) {
-    const open = html.indexOf('<div class="message-content"', start);
-    if (open === -1) break;
-    const close = html.indexOf('</div>', open);
-    if (close === -1) break;
-    let content = html.substring(open, close);
-    content = content.replace(/<[^>]*>/g, ' ');
-    content = content.replace(/\s+/g, ' ').trim();
-    if (content) messages.push(content);
-    start = close + 1;
-  }
-  return messages.join('\n');
+function normalizeWhitespace(text) {
+  return text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
 }
 
-// ============================================================
-// 3. ПАРСИНГ В JSON (с sections, chapters, articles, parts)
-// ============================================================
+/**
+ * Находит последнее вхождение "Наказание..." в тексте и разбивает его на
+ * содержательную часть и текст наказания. Работает независимо от того,
+ * стоит ли "Наказание" в начале своей строки или вклеено в конец абзаца.
+ */
+function splitPunishmentFromText(text) {
+  if (!text) return { text: '', punishment: null };
 
-function parseLawWithSections(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  
-  const sections = [];
-  let currentSection = null;
-  let currentChapter = null;
-  let currentArticle = null;
-  let currentParts = [];
-  let buffer = [];
-
-  // === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
-
-  function cleanText(t) {
-    return t.replace(/\s+/g, ' ').trim();
+  const matches = [...text.matchAll(PUNISHMENT_RE)].filter((m) => isBoundary(text, m.index));
+  if (!matches.length) {
+    return { text: cleanText(text), punishment: null };
   }
 
-  function extractPunishment(t) {
-    const match = t.match(/Наказание[:\s]+([^\n]*)/i);
-    return match ? match[1].trim() : null;
-  }
+  const last = matches[matches.length - 1];
+  const before = text.slice(0, last.index);
+  const after = text.slice(last.index + last[0].length);
 
-  function removePunishment(t) {
-    return t.replace(/Наказание[:\s]+[^\n]*/i, '').trim();
-  }
+  return {
+    text: cleanText(before),
+    punishment: cleanText(after) || null,
+  };
+}
 
-  function savePart() {
-    if (currentParts.length > 0 && buffer.length > 0) {
-      const partText = cleanText(buffer.join(' '));
-      const punishment = extractPunishment(partText);
-      currentParts.push({
-        id: `ч. ${currentParts.length + 1}`,
-        text: punishment ? `${removePunishment(partText)} Наказание: ${punishment}` : removePunishment(partText)
-      });
-      buffer = [];
-    }
-  }
+function parseCodex(rawText) {
+  const text = normalizeWhitespace(rawText);
+  const articles = [];
 
-  function saveArticle() {
-    if (currentArticle) {
-      // Если есть буфер, но нет частей — создаём ч. 1
-      if (currentParts.length === 0 && buffer.length > 0) {
-        const partText = cleanText(buffer.join(' '));
-        const punishment = extractPunishment(partText);
-        currentParts.push({
-          id: 'ч. 1',
-          text: punishment ? `${removePunishment(partText)} Наказание: ${punishment}` : removePunishment(partText)
-        });
-        buffer = [];
-      }
-      // Если есть буфер и есть части — добавляем к последней части
-      if (buffer.length > 0 && currentParts.length > 0) {
-        const lastPart = currentParts[currentParts.length - 1];
-        const extraText = cleanText(buffer.join(' '));
-        const punishment = extractPunishment(extraText);
-        if (punishment) {
-          lastPart.text = `${lastPart.text} ${removePunishment(extraText)} Наказание: ${punishment}`;
-        } else {
-          lastPart.text = `${lastPart.text} ${extraText}`;
-        }
-        buffer = [];
-      }
-      // Если нет частей и нет буфера — создаём заглушку
-      if (currentParts.length === 0) {
-        currentParts.push({
-          id: 'ч. 1',
-          text: currentArticle.title || 'Нет текста'
+  const headerMatches = [...text.matchAll(ARTICLE_HEADER_RE)].filter((m) => isBoundary(text, m.index));
+
+  for (let i = 0; i < headerMatches.length; i++) {
+    const m = headerMatches[i];
+    const bodyStart = m.index + m[0].length;
+    const bodyEnd = i + 1 < headerMatches.length ? headerMatches[i + 1].index : text.length;
+    const chunk = text.slice(bodyStart, bodyEnd).trim();
+
+    const stars = m[2] || '';
+    const article = {
+      number: m[1],
+      rating: stars.length || null,
+      tag: m[3] ? m[3].trim() : null,
+      title: null,
+      parts: [],
+    };
+
+    const partMatches = [...chunk.matchAll(PART_HEADER_RE)].filter((pm) => isBoundary(chunk, pm.index));
+
+    if (partMatches.length === 0) {
+      // явных частей нет — весь текст статьи это одно тело
+      const split = splitPunishmentFromText(chunk);
+      article.parts.push({ part: null, text: split.text, punishment: split.punishment });
+    } else {
+      // текст до первой части — короткое название статьи (если есть)
+      const headText = chunk.slice(0, partMatches[0].index).trim();
+      article.title = headText ? cleanText(headText) : null;
+
+      for (let j = 0; j < partMatches.length; j++) {
+        const pm = partMatches[j];
+        const partBodyStart = pm.index + pm[0].length;
+        const partBodyEnd = j + 1 < partMatches.length ? partMatches[j + 1].index : chunk.length;
+        const partChunk = chunk.slice(partBodyStart, partBodyEnd).trim();
+
+        const split = splitPunishmentFromText(partChunk);
+        article.parts.push({
+          part: parseInt(pm[1], 10),
+          text: split.text,
+          punishment: split.punishment,
         });
       }
-      currentArticle.parts = currentParts;
-      currentChapter.articles.push(currentArticle);
-      currentArticle = null;
-      currentParts = [];
     }
+
+    articles.push(article);
   }
 
-  function saveChapter() {
-    if (currentChapter) {
-      currentSection.chapters.push(currentChapter);
-      currentChapter = null;
-    }
-  }
-
-  function saveSection() {
-    if (currentSection) {
-      sections.push(currentSection);
-      currentSection = null;
-    }
-  }
-
-  // === ОСНОВНОЙ ЦИКЛ ===
-
-  for (const line of lines) {
-    // === НОВЫЙ РАЗДЕЛ ===
-    const sectionMatch = line.match(/^(?:Раздел|Глава)\s+([\dIVXLCDM]+)\.?\s*(.*)$/i);
-    if (sectionMatch && !line.match(/^Глава\s+[\dIVXLCDM]+/i)) {
-      saveArticle();
-      saveChapter();
-      saveSection();
-      
-      currentSection = {
-        id: sectionMatch[1],
-        title: sectionMatch[2] || '',
-        chapters: []
-      };
-      continue;
-    }
-
-    // === НОВАЯ ГЛАВА ===
-    const chapterMatch = line.match(/^Глава\s+([\dIVXLCDM]+)\.?\s*(.*)$/i);
-    if (chapterMatch) {
-      saveArticle();
-      saveChapter();
-      
-      currentChapter = {
-        id: chapterMatch[1],
-        title: chapterMatch[2] || '',
-        articles: []
-      };
-      continue;
-    }
-
-    // === НОВАЯ СТАТЬЯ ===
-    const articleMatch = line.match(/^Статья\s+(\d+(?:\.\d+)?)\s*(.*)$/i);
-    if (articleMatch) {
-      saveArticle();
-      
-      currentArticle = {
-        id: articleMatch[1],
-        title: articleMatch[2] || '',
-        parts: []
-      };
-      currentParts = [];
-      buffer = [];
-      continue;
-    }
-
-    // === НАКАЗАНИЕ ===
-    const punishMatch = line.match(/^Наказание[:\s]+(.*)$/i);
-    if (punishMatch && currentArticle) {
-      const punishment = punishMatch[1].trim();
-      if (currentParts.length > 0) {
-        const lastPart = currentParts[currentParts.length - 1];
-        lastPart.text = `${lastPart.text} Наказание: ${punishment}`;
-      } else {
-        buffer.push(`Наказание: ${punishment}`);
-      }
-      continue;
-    }
-
-    // === ОБЫЧНЫЙ ТЕКСТ ===
-    if (currentArticle) {
-      buffer.push(line);
-    }
-  }
-
-  // Сохраняем последние элементы
-  saveArticle();
-  saveChapter();
-  saveSection();
-
-  return { sections };
+  return articles;
 }
 
-// ============================================================
-// 4. ЗАПУСК
-// ============================================================
-
-async function main() {
-  const urls = {
-    pk: 'https://forum.majestic-rp.ru/threads/protsessual-nyi-kodeks-shtata-san-andreas.3232571/',
-    uk: 'https://forum.majestic-rp.ru/threads/ugolovnyi-kodeks-shtata-san-andreas.3232577/',
-    ak: 'https://forum.majestic-rp.ru/threads/administrativnyi-kodeks-shtata-san-andreas.3232568/',
-    dk: 'https://forum.majestic-rp.ru/threads/dorozhnyi-kodeks-shtata-san-andreas.3232575/'
-  };
-
-  const titles = {
-    pk: 'Процессуальный кодекс штата San-Andreas',
-    uk: 'Уголовный кодекс штата San-Andreas',
-    ak: 'Административный кодекс штата San-Andreas',
-    dk: 'Дорожный кодекс штата San-Andreas'
-  };
-
-  for (const [type, url] of Object.entries(urls)) {
-    try {
-      console.log(`📥 Загрузка ${type}...`);
-      const html = await fetchHtml(url);
-      const text = extractText(html);
-      const data = parseLawWithSections(text);
-      
-      // Добавляем метаданные
-      const result = {
-        server: 'orlando',
-        serverName: 'Orlando',
-        codexType: type,
-        title: titles[type],
-        url: url,
-        lastUpdate: new Date().toISOString(),
-        ...data,
-        totalArticles: data.sections.reduce((acc, s) => {
-          return acc + s.chapters.reduce((acc2, c) => acc2 + c.articles.length, 0);
-        }, 0)
-      };
-
-      fs.writeFileSync(`${type}.json`, JSON.stringify(result, null, 2));
-      console.log(`✅ ${type}.json — ${result.totalArticles} статей`);
-    } catch (e) {
-      console.error(`❌ ${type}: ${e.message}`);
-    }
-  }
+function cleanText(text) {
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:])/g, '$1')
+    .trim();
 }
 
-main().catch(console.error);
+// ------------------------------------------------------------------
+// HTML -> текст, без потерь структуры
+// ------------------------------------------------------------------
+
+const NAMED_ENTITIES = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  laquo: '«',
+  raquo: '»',
+  mdash: '—',
+  ndash: '–',
+  hellip: '…',
+  rsquo: '’',
+  lsquo: '‘',
+  rdquo: '”',
+  ldquo: '“',
+  copy: '©',
+  reg: '®',
+  deg: '°',
+  bull: '•',
+};
+
+function decodeEntities(str) {
+  return str
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&([a-zA-Z]+);/g, (m, name) =>
+      Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : m
+    );
+}
+
+/**
+ * Превращает сырой HTML (innerHTML одного или нескольких bbWrapper, склеенных
+ * маркером POST_BREAK) в текст. Переносы строк тут не критичны для парсинга
+ * (parseCodex работает по всему тексту целиком), но сохраняются для
+ * читаемости и на случай отладки через *.raw.html/*.txt.
+ */
+function htmlToText(html) {
+  if (!html) return '';
+
+  let text = html;
+
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
+  text = text.replace(/<blockquote[\s\S]*?<\/blockquote>/gi, '');
+
+  text = text.replace(/<!--\s*POST_BREAK\s*-->/g, '\n\n');
+
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<li[^>]*>/gi, '\n');
+  text = text.replace(
+    /<\/(p|div|li|tr|td|th|h[1-6]|blockquote|section|article|table|ul|ol)>/gi,
+    '\n'
+  );
+
+  text = text.replace(/<[^>]+>/g, '');
+  text = decodeEntities(text);
+
+  text = text
+    .split('\n')
+    .map((l) => l.replace(/\u00A0/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n');
+
+  return text.trim();
+}
+
+function parseCodexFromHtml(html) {
+  const text = htmlToText(html);
+  return parseCodex(text);
+}
+
+module.exports = { parseCodex, parseCodexFromHtml, htmlToText, cleanText };
