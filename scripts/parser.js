@@ -1,200 +1,373 @@
 'use strict';
 
-/**
- * Парсер уголовного/административного кодекса форума Majestic (XenForo).
- *
- * Работает НЕ построчно, а по всему тексту сразу — независимо от того, как
- * именно отформатирован конкретный пост: с переносами строк или без них,
- * со звёздами рейтинга/тегом или без, с "ч. N" или одним сплошным абзацем,
- * с "Наказание:" на отдельной строке или вклеенным в конец предложения.
- *
- * Правило простое: как только в тексте встречается "Статья N" — начинается
- * новая статья. Как только внутри неё (или её части) встречается
- * "Наказание" — всё, что после него, уходит в punishment, а всё, что до
- * него — в text. Больше никаких требований к разметке нет.
- *
- * Режимы работы:
- *  - parseCodex(rawText)      — на вход обычный текст
- *  - parseCodexFromHtml(html) — на вход сырой HTML сообщения(й) форума;
- *    HTML сначала превращается в текст (htmlToText), а затем разбирается
- *    той же логикой.
- */
+const puppeteer = require('puppeteer');
+const fs = require('fs');
+const path = require('path');
+const { parseCodexFromHtml } = require('./parser.js');
 
-// заголовок статьи: номер [+ звёзды рейтинга] [+ тег в скобках]
-const ARTICLE_HEADER_RE = /Статья\s+(\d+(?:\.\d+)*)\s*(★+)?\s*(?:\[([^\]]+)\])?/gi;
-// заголовок части: "ч. N" / "ч N" / "ч.N)" и т.п.
-const PART_HEADER_RE = /ч\.?\s*(\d+)\s*[.)]?/gi;
-// "Наказание", "Наказания", "Наказанием" и т.д., с любым разделителем после (":", "-", "—") или без него
-const PUNISHMENT_RE = /Наказани[а-яё]*\s*[:\-—]?\s*/gi;
-
-// символы, которые считаем допустимой границей перед словом-маркером
-// (начало текста или пробел/знак препинания перед ним)
-function isBoundary(str, idx) {
-  if (idx <= 0) return true;
-  return /[\s.,;:()\-—\n\r]/.test(str[idx - 1]);
+// ============================================================
+// ГАРАНТИРОВАННОЕ СОЗДАНИЕ ПАПКИ data/ ПРИ ЗАПУСКЕ
+// ============================================================
+const DATA_DIR = path.join(__dirname, '../data');
+try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    console.log('✅ Папка data/ создана (или уже существует)');
+} catch(e) {
+    console.log('⚠️ Не удалось создать папку data/');
 }
 
-function normalizeWhitespace(text) {
-  return text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Находит последнее вхождение "Наказание..." в тексте и разбивает его на
- * содержательную часть и текст наказания. Работает независимо от того,
- * стоит ли "Наказание" в начале своей строки или вклеено в конец абзаца.
- */
-function splitPunishmentFromText(text) {
-  if (!text) return { text: '', punishment: null };
-
-  const matches = [...text.matchAll(PUNISHMENT_RE)].filter((m) => isBoundary(text, m.index));
-  if (!matches.length) {
-    return { text: cleanText(text), punishment: null };
-  }
-
-  const last = matches[matches.length - 1];
-  const before = text.slice(0, last.index);
-  const after = text.slice(last.index + last[0].length);
-
-  return {
-    text: cleanText(before),
-    punishment: cleanText(after) || null,
-  };
-}
-
-function parseCodex(rawText) {
-  const text = normalizeWhitespace(rawText);
-  const articles = [];
-
-  const headerMatches = [...text.matchAll(ARTICLE_HEADER_RE)].filter((m) => isBoundary(text, m.index));
-
-  for (let i = 0; i < headerMatches.length; i++) {
-    const m = headerMatches[i];
-    const bodyStart = m.index + m[0].length;
-    const bodyEnd = i + 1 < headerMatches.length ? headerMatches[i + 1].index : text.length;
-    const chunk = text.slice(bodyStart, bodyEnd).trim();
-
-    const stars = m[2] || '';
-    const article = {
-      number: m[1],
-      rating: stars.length || null,
-      tag: m[3] ? m[3].trim() : null,
-      title: null,
-      parts: [],
-    };
-
-    const partMatches = [...chunk.matchAll(PART_HEADER_RE)].filter((pm) => isBoundary(chunk, pm.index));
-
-    if (partMatches.length === 0) {
-      // явных частей нет — весь текст статьи это одно тело
-      const split = splitPunishmentFromText(chunk);
-      article.parts.push({ part: null, text: split.text, punishment: split.punishment });
-    } else {
-      // текст до первой части — короткое название статьи (если есть)
-      const headText = chunk.slice(0, partMatches[0].index).trim();
-      article.title = headText ? cleanText(headText) : null;
-
-      for (let j = 0; j < partMatches.length; j++) {
-        const pm = partMatches[j];
-        const partBodyStart = pm.index + pm[0].length;
-        const partBodyEnd = j + 1 < partMatches.length ? partMatches[j + 1].index : chunk.length;
-        const partChunk = chunk.slice(partBodyStart, partBodyEnd).trim();
-
-        const split = splitPunishmentFromText(partChunk);
-        article.parts.push({
-          part: parseInt(pm[1], 10),
-          text: split.text,
-          punishment: split.punishment,
-        });
-      }
+// ============================================================
+// КОНФИГУРАЦИЯ СЕРВЕРОВ — ТОЛЬКО ORLANDO
+// ============================================================
+const SERVERS = [
+    {
+        id: 'orlando',
+        name: 'Orlando',
+        url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
     }
+    // ===== ДЛЯ ДОБАВЛЕНИЯ ДРУГИХ СЕРВЕРОВ РАСКОММЕНТИРУЙ И ЗАМЕНИ ССЫЛКИ =====
+    // {
+    //     id: 'new_york',
+    //     name: 'New York',
+    //     url: 'https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/'
+    // }
+];
 
-    articles.push(article);
-  }
-
-  return articles;
-}
-
-function cleanText(text) {
-  return text
-    .replace(/\s+/g, ' ')
-    .replace(/\s+([,.;:])/g, '$1')
-    .trim();
-}
-
-// ------------------------------------------------------------------
-// HTML -> текст, без потерь структуры
-// ------------------------------------------------------------------
-
-const NAMED_ENTITIES = {
-  nbsp: ' ',
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  laquo: '«',
-  raquo: '»',
-  mdash: '—',
-  ndash: '–',
-  hellip: '…',
-  rsquo: '’',
-  lsquo: '‘',
-  rdquo: '”',
-  ldquo: '“',
-  copy: '©',
-  reg: '®',
-  deg: '°',
-  bull: '•',
+// ============================================================
+// КЛЮЧЕВЫЕ СЛОВА ДЛЯ ПОИСКА ТЕМ
+// ============================================================
+const CODEX_KEYWORDS = {
+    uk: ['уголовный кодекс'],
+    ak: ['административный кодекс'],
+    pk: ['процессуальный кодекс'],
+    dk: ['дорожный кодекс']
 };
 
-function decodeEntities(str) {
-  return str
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
-    .replace(/&([a-zA-Z]+);/g, (m, name) =>
-      Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : m
-    );
+const SELECTORS = {
+    threadLink: '.structItem-title a, a[data-preview]',
+    // каждое сообщение в теме (XenForo 2)
+    postArticle: 'article.message--post, article.message',
+    // тело сообщения внутри поста
+    content: '.message-body .bbWrapper, .bbWrapper, .messageContent',
+    // кнопка спойлера, которую нужно "раскрыть", чтобы её содержимое попало в HTML
+    spoilerButton: '.bbCodeSpoiler-button',
+    // ссылка "следующая страница" в пагинации темы
+    nextPage: '.pageNav-jump--next, a.pageNav-jump--next'
+};
+
+// ============================================================
+// РАСКРЫТИЕ ВСЕХ СПОЙЛЕРОВ НА СТРАНИЦЕ
+// (иначе их текст просто не попадёт ни в HTML, ни в innerText)
+// ============================================================
+async function expandAllSpoilers(page) {
+    const MAX_ROUNDS = 25;
+    for (let i = 0; i < MAX_ROUNDS; i++) {
+        const clicked = await page.evaluate((selector) => {
+            const buttons = Array.from(document.querySelectorAll(selector));
+            let count = 0;
+            for (const btn of buttons) {
+                const wrapper = btn.closest('.bbCodeSpoiler');
+                const content = wrapper ? wrapper.querySelector('.bbCodeSpoiler-content') : null;
+                const isHidden = content &&
+                    (content.style.display === 'none' || getComputedStyle(content).display === 'none');
+                if (isHidden) {
+                    btn.click();
+                    count++;
+                }
+            }
+            return count;
+        }, SELECTORS.spoilerButton);
+
+        if (clicked === 0) break;
+        await new Promise((r) => setTimeout(r, 150));
+    }
+}
+
+// ============================================================
+// ИЗВЛЕЧЕНИЕ ВСЕХ ПОСТОВ ТЕКУЩЕЙ СТРАНИЦЫ (автор + сырой HTML тела)
+// ============================================================
+async function extractPostsOnPage(page) {
+    return await page.evaluate((sel) => {
+        const posts = [];
+        document.querySelectorAll(sel.postArticle).forEach((art) => {
+            const author = art.getAttribute('data-author') || '';
+            const bodyEl = art.querySelector(sel.content.split(',')[0].trim()) || art.querySelector('.bbWrapper');
+            if (!bodyEl) return;
+
+            const clone = bodyEl.cloneNode(true);
+            clone.querySelectorAll('blockquote, .bbCodeBlock--quote, .quoteContainer').forEach((q) => q.remove());
+
+            posts.push({ author, html: clone.innerHTML });
+        });
+        return posts;
+    }, SELECTORS);
+}
+
+// ============================================================
+// ОСНОВНЫЕ ФУНКЦИИ
+// ============================================================
+
+function detectCodexType(title) {
+    const lower = title.toLowerCase();
+    for (const [type, keywords] of Object.entries(CODEX_KEYWORDS)) {
+        for (const keyword of keywords) {
+            if (lower.includes(keyword)) {
+                return type;
+            }
+        }
+    }
+    return null;
+}
+
+async function findCodexThreads(page, sectionUrl) {
+    console.log(`🔍 Ищем темы с кодексами в разделе: ${sectionUrl}`);
+
+    await page.goto(sectionUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await page.waitForSelector(SELECTORS.threadLink, { timeout: 30000 });
+
+    const threads = await page.evaluate((selector) => {
+        const results = [];
+        document.querySelectorAll(selector).forEach(el => {
+            const href = el.getAttribute('href');
+            const title = el.innerText.trim();
+            if (href && title) {
+                const fullUrl = href.startsWith('http') ? href : `https://forum.majestic-rp.ru${href}`;
+                results.push({ url: fullUrl, title });
+            }
+        });
+        return results;
+    }, SELECTORS.threadLink);
+
+    const found = {};
+    for (const thread of threads) {
+        const type = detectCodexType(thread.title);
+        if (type && !found[type]) {
+            found[type] = { url: thread.url, title: thread.title };
+            console.log(`✅ Найден ${type.toUpperCase()}: "${thread.title}"`);
+        }
+    }
+
+    return found;
 }
 
 /**
- * Превращает сырой HTML (innerHTML одного или нескольких bbWrapper, склеенных
- * маркером POST_BREAK) в текст. Переносы строк тут не критичны для парсинга
- * (parseCodex работает по всему тексту целиком), но сохраняются для
- * читаемости и на случай отладки через *.raw.html/*.txt.
+ * Скачивает ПОЛНЫЙ HTML темы, ничего не теряя:
+ *  - раскрывает все спойлеры перед извлечением,
+ *  - берёт innerHTML (а не innerText), чтобы сохранить всю структуру,
+ *  - склеивает подряд идущие посты автора темы (кодекс часто разбит на
+ *    несколько сообщений подряд из-за лимита символов XenForo),
+ *  - при необходимости переходит по страницам пагинации, пока посты
+ *    принадлежат автору темы.
+ *
+ * Возвращает сырой HTML (не текст) — его дальше разбирает parseCodexFromHtml.
  */
-function htmlToText(html) {
-  if (!html) return '';
+async function scrapeThread(page, url) {
+    try {
+        console.log(`📖 Парсинг: ${url}`);
 
-  let text = html;
+        const htmlParts = [];
+        let opAuthor = null;
+        let currentUrl = url;
+        let pageIndex = 1;
+        const MAX_PAGES = 10;
 
-  text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
-  text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
-  text = text.replace(/<blockquote[\s\S]*?<\/blockquote>/gi, '');
+        while (currentUrl && pageIndex <= MAX_PAGES) {
+            await page.goto(currentUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+            await page.waitForSelector(SELECTORS.content, { timeout: 30000 });
 
-  text = text.replace(/<!--\s*POST_BREAK\s*-->/g, '\n\n');
+            await expandAllSpoilers(page);
 
-  text = text.replace(/<br\s*\/?>/gi, '\n');
-  text = text.replace(/<li[^>]*>/gi, '\n');
-  text = text.replace(
-    /<\/(p|div|li|tr|td|th|h[1-6]|blockquote|section|article|table|ul|ol)>/gi,
-    '\n'
-  );
+            const posts = await extractPostsOnPage(page);
+            if (!posts.length) break;
 
-  text = text.replace(/<[^>]+>/g, '');
-  text = decodeEntities(text);
+            if (opAuthor === null) {
+                opAuthor = posts[0].author;
+            }
 
-  text = text
-    .split('\n')
-    .map((l) => l.replace(/\u00A0/g, ' ').trim())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n');
+            let hitOtherAuthor = false;
+            for (const post of posts) {
+                if (post.author !== opAuthor) {
+                    hitOtherAuthor = true;
+                    break;
+                }
+                htmlParts.push(post.html);
+            }
 
-  return text.trim();
+            if (hitOtherAuthor) {
+                // дошли до ответа другого пользователя — кодекс закончился
+                break;
+            }
+
+            // вся страница состояла из постов автора темы — проверяем, есть ли ещё страницы
+            const nextHref = await page.evaluate((selector) => {
+                const a = document.querySelector(selector);
+                return a ? a.getAttribute('href') : null;
+            }, SELECTORS.nextPage);
+
+            if (!nextHref) break;
+
+            currentUrl = nextHref.startsWith('http') ? nextHref : `https://forum.majestic-rp.ru${nextHref}`;
+            pageIndex++;
+            if (pageIndex > 1) {
+                console.log(`   ↳ продолжение темы: страница ${pageIndex}`);
+            }
+        }
+
+        if (!htmlParts.length) return null;
+
+        return htmlParts.join('\n<!--POST_BREAK-->\n');
+    } catch (e) {
+        console.error(`❌ Ошибка парсинга ${url}: ${e.message}`);
+        return null;
+    }
 }
 
-function parseCodexFromHtml(html) {
-  const text = htmlToText(html);
-  return parseCodex(text);
+async function scrapeServer(server) {
+    console.log(`\n🌐 Обработка сервера: ${server.name} (${server.id})`);
+    console.log(`🔗 Раздел с законами: ${server.url}`);
+
+    const serverDir = path.join(DATA_DIR, server.id);
+    if (!fs.existsSync(serverDir)) {
+        fs.mkdirSync(serverDir, { recursive: true });
+    }
+
+    const browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    try {
+        const page = await browser.newPage();
+        await page.setUserAgent(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        );
+
+        const found = await findCodexThreads(page, server.url);
+
+        const codexTypes = ['uk', 'ak', 'pk', 'dk'];
+        const results = {};
+
+        for (const type of codexTypes) {
+            const thread = found[type];
+            if (!thread) {
+                console.log(`⚠️ ${type.toUpperCase()} не найден в разделе`);
+                results[type] = { success: false, error: 'Не найдено' };
+                continue;
+            }
+
+            const html = await scrapeThread(page, thread.url);
+            if (html) {
+                const articles = parseCodexFromHtml(html);
+                const output = {
+                    server: server.id,
+                    serverName: server.name,
+                    codexType: type,
+                    title: thread.title,
+                    url: thread.url,
+                    lastUpdate: new Date().toISOString(),
+                    articles: articles,
+                    totalArticles: articles.length
+                };
+
+                const filePath = path.join(serverDir, `${type}.json`);
+                fs.writeFileSync(filePath, JSON.stringify(output, null, 2));
+
+                // сырой HTML сохраняем отдельно — полезно для отладки парсера,
+                // если регулярки в parser.js не разобрали что-то новое
+                const rawPath = path.join(serverDir, `${type}.raw.html`);
+                fs.writeFileSync(rawPath, html);
+
+                console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей)`);
+                results[type] = { success: true, articles: articles.length };
+            } else {
+                console.log(`❌ ${type.toUpperCase()} не удалось спарсить`);
+                results[type] = { success: false, error: 'Ошибка парсинга' };
+            }
+        }
+
+        return results;
+
+    } finally {
+        await browser.close();
+    }
 }
 
-module.exports = { parseCodex, parseCodexFromHtml, htmlToText, cleanText };
+async function scrapeAllServers() {
+    const results = {};
+
+    for (const server of SERVERS) {
+        try {
+            results[server.id] = await scrapeServer(server);
+        } catch (e) {
+            console.error(`❌ Критическая ошибка на сервере ${server.id}:`, e.message);
+            results[server.id] = { error: e.message };
+        }
+    }
+
+    // ============================================================
+    // ГАРАНТИРОВАННОЕ СОЗДАНИЕ .last-run.json
+    // ============================================================
+    const lastRunFile = path.join(DATA_DIR, '.last-run.json');
+    try {
+        fs.writeFileSync(lastRunFile, JSON.stringify({
+            lastRun: new Date().toISOString(),
+            servers: Object.keys(results).map(id => ({
+                id,
+                status: results[id].error ? 'error' : 'success'
+            }))
+        }, null, 2));
+        console.log(`✅ .last-run.json создан`);
+    } catch(e) {
+        console.log('⚠️ Не удалось создать .last-run.json:', e.message);
+        // СОЗДАЁМ МИНИМАЛЬНЫЙ ФАЙЛ, ЧТОБЫ GIT НЕ ПАДАЛ
+        try {
+            fs.writeFileSync(lastRunFile, JSON.stringify({ lastRun: new Date().toISOString() }));
+            console.log('✅ .last-run.json создан (минимальная версия)');
+        } catch(e2) {
+            console.log('❌ Критическая ошибка: не удалось создать .last-run.json');
+        }
+    }
+
+    // ============================================================
+    // ОТЧЁТ
+    // ============================================================
+    const reportPath = path.join(DATA_DIR, 'report.json');
+    const report = {
+        timestamp: new Date().toISOString(),
+        servers: Object.keys(results).map(id => ({
+            id,
+            status: results[id].error ? 'error' : 'success',
+            details: results[id]
+        }))
+    };
+    try {
+        fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+        console.log(`\n📊 Отчёт сохранён в ${reportPath}`);
+    } catch(e) {
+        console.log('⚠️ Не удалось сохранить отчёт');
+    }
+
+    return results;
+}
+
+// ============================================================
+// ЗАПУСК
+// ============================================================
+if (require.main === module) {
+    const isTest = process.argv.includes('--test');
+
+    if (isTest) {
+        console.log('🧪 Тестовый режим');
+        const testServer = SERVERS.find(s => s.id === 'orlando');
+        if (testServer) {
+            scrapeServer(testServer).then(console.log).catch(console.error);
+        } else {
+            console.log('❌ Сервер Orlando не найден в конфиге');
+        }
+    } else {
+        scrapeAllServers().then(console.log).catch(console.error);
+    }
+}
+
+module.exports = { scrapeServer, scrapeAllServers, SERVERS };
