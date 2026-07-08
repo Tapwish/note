@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-07-08T09:30:50.118Z",
+  "timestamp": "2026-07-08T09:38:03.905Z",
   "servers": [
     {
       "id": "orlando",
@@ -7,19 +7,23 @@
       "details": {
         "uk": {
           "success": true,
-          "articles": 157
+          "articles": 77,
+          "penaltyArticles": 33
         },
         "ak": {
           "success": true,
-          "articles": 80
+          "articles": 39,
+          "penaltyArticles": 8
         },
         "pk": {
           "success": true,
-          "articles": 103
+          "articles": 101,
+          "penaltyArticles": 96
         },
         "dk": {
           "success": true,
-          "articles": 67
+          "articles": 67,
+          "penaltyArticles": 0
         }
       }
     }
