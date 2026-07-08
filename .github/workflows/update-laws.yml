@@ -35,11 +35,10 @@ jobs:
       - name: Установка Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '22'
 
       - name: Установка зависимостей
-        run: npm ci || npm install
+        run: npm install
 
       # Puppeteer сам ставит Chromium через postinstall, но на ubuntu-latest
       # иногда не хватает системных библиотек для его запуска — доустанавливаем.
