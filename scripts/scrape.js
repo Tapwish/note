@@ -11,9 +11,6 @@ try {
     console.log('✅ Папка data/ создана');
 } catch(e) {}
 
-// ============================================================
-// КОНФИГУРАЦИЯ
-// ============================================================
 const SERVERS = [
     {
         id: 'orlando',
@@ -33,10 +30,6 @@ const SELECTORS = {
     threadLink: '.structItem-title a, a[data-preview]',
     content: '.message-body .bbWrapper, .bbWrapper, .messageContent'
 };
-
-// ============================================================
-// ФУНКЦИИ
-// ============================================================
 
 function detectCodexType(title) {
     const lower = title.toLowerCase();
@@ -81,34 +74,27 @@ async function findCodexThreads(page, sectionUrl) {
     return found;
 }
 
+// ============================================================
+// ГЛАВНАЯ ФУНКЦИЯ — КОПИРУЕТ ПОЛНЫЙ HTML
+// ============================================================
 async function scrapeThread(page, url) {
     try {
         console.log(`📖 Парсинг HTML: ${url}`);
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         await page.waitForSelector(SELECTORS.content, { timeout: 30000 });
 
-        // ===== ИЗВЛЕКАЕМ HTML =====
+        // ===== КОПИРУЕМ ПОЛНЫЙ HTML =====
         const htmlContent = await page.evaluate((selector) => {
             const el = document.querySelector(selector);
             if (!el) return null;
-            // Клонируем, чтобы не менять оригинальный DOM
             const clone = el.cloneNode(true);
-            // Убираем цитаты, но оставляем остальной HTML
+            // Убираем цитаты
             clone.querySelectorAll('blockquote, .bbCodeBlock--quote, .quoteContainer').forEach(q => q.remove());
-            // Возвращаем ВЕСЬ HTML
+            // Возвращаем HTML
             return clone.innerHTML;
         }, SELECTORS.content);
 
-        // Также получаем текст для отладки
-        const textContent = await page.evaluate((selector) => {
-            const el = document.querySelector(selector);
-            if (!el) return null;
-            const clone = el.cloneNode(true);
-            clone.querySelectorAll('blockquote, .bbCodeBlock--quote, .quoteContainer').forEach(q => q.remove());
-            return clone.innerText.trim();
-        }, SELECTORS.content);
-
-        return { html: htmlContent, text: textContent };
+        return htmlContent;
 
     } catch (e) {
         console.error(`❌ Ошибка парсинга ${url}: ${e.message}`);
@@ -145,12 +131,11 @@ async function scrapeServer(server) {
                 continue;
             }
 
-            const content = await scrapeThread(page, thread.url);
-            if (content && content.html) {
-                // Парсим HTML для извлечения статей
-                const articles = parseCodex(content.html);
+            const html = await scrapeThread(page, thread.url);
+            if (html) {
+                // ===== ПАРСИМ СТАТЬИ ИЗ HTML =====
+                const articles = parseCodex(html);
                 
-                // Сохраняем ФУЛЛ HTML и структуру
                 const output = {
                     server: server.id,
                     serverName: server.name,
@@ -158,16 +143,15 @@ async function scrapeServer(server) {
                     title: thread.title,
                     url: thread.url,
                     lastUpdate: new Date().toISOString(),
-                    // ===== ВАЖНО: СОХРАНЯЕМ ПОЛНЫЙ HTML =====
-                    htmlContent: content.html,
-                    textContent: content.text,
+                    // ===== СОХРАНЯЕМ HTML =====
+                    htmlContent: html,
                     articles: articles,
                     totalArticles: articles.length
                 };
 
                 const filePath = path.join(serverDir, `${type}.json`);
                 fs.writeFileSync(filePath, JSON.stringify(output, null, 2));
-                console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей, ${content.html.length} символов HTML)`);
+                console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей, ${html.length} символов HTML)`);
                 results[type] = { success: true, articles: articles.length };
             } else {
                 console.log(`❌ ${type.toUpperCase()} не спарсен`);
@@ -194,7 +178,6 @@ async function scrapeAllServers() {
         }
     }
 
-    // .last-run.json
     const lastRunFile = path.join(DATA_DIR, '.last-run.json');
     try {
         fs.writeFileSync(lastRunFile, JSON.stringify({
@@ -209,7 +192,6 @@ async function scrapeAllServers() {
         console.log('⚠️ .last-run.json не создан');
     }
 
-    // report.json
     const reportPath = path.join(DATA_DIR, 'report.json');
     const report = {
         timestamp: new Date().toISOString(),
@@ -225,9 +207,6 @@ async function scrapeAllServers() {
     return results;
 }
 
-// ============================================================
-// ЗАПУСК
-// ============================================================
 if (require.main === module) {
     const isTest = process.argv.includes('--test');
 
