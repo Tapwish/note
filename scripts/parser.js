@@ -3,10 +3,11 @@
 /**
  * Парсер, который извлекает статьи из HTML-кода
  * Сохраняет структуру и форматирование
+ * Возвращает данные в формате, совместимом с приложением
  */
 
 function parseCodex(htmlContent) {
-    // Убираем лишние пробелы и переносы
+    // Очищаем HTML от лишних пробелов
     const cleanHtml = htmlContent
         .replace(/\s+/g, ' ')
         .trim();
@@ -19,15 +20,14 @@ function parseCodex(htmlContent) {
     let currentHtml = [];
     let isInArticle = false;
 
-    // Разбиваем HTML на строки
-    const lines = cleanHtml.split('\n');
+    // Разбиваем на строки (сохраняя структуру)
+    const lines = cleanHtml.split(/\n|(?=<)/);
 
     for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
         // ===== ИЩЕМ СТАТЬЮ =====
-        // Паттерн: Статья 6.1 Название
         const articleMatch = trimmed.match(/Статья\s+(\d+(?:\.\d+)*)\s*(?:\[([^\]]+)\])?\s*(.*)/i);
         if (articleMatch) {
             // Сохраняем предыдущую статью
@@ -52,12 +52,11 @@ function parseCodex(htmlContent) {
         }
 
         // ===== ИЩЕМ ЧАСТЬ СТАТЬИ =====
-        // Паттерн: ч.1 Текст
         const partMatch = trimmed.match(/ч\.?\s*(\d+)\s*[.)]?\s*(.*)/i);
         if (partMatch && isInArticle) {
-            // Если есть предыдущая часть — сохраняем её
+            // Если есть предыдущая часть с пустым текстом — обновляем
             if (currentParts.length > 0 && currentParts[currentParts.length - 1].text === '') {
-                // Пустая часть — пропускаем
+                currentParts.pop();
             }
             currentParts.push({
                 part: parseInt(partMatch[1], 10),
@@ -77,13 +76,10 @@ function parseCodex(htmlContent) {
             continue;
         }
 
-        // ===== ОБЫЧНЫЙ ТЕКСТ =====
-        // Если строка не начинается с маркеров и мы внутри статьи — добавляем к последней части
+        // ===== ОБЫЧНЫЙ ТЕКСТ (добавляем к последней части) =====
         if (isInArticle && currentParts.length > 0) {
-            // Если строка не является новой частью или наказанием
             if (!trimmed.match(/^ч\.?\s*\d+/) && !trimmed.match(/Наказание/)) {
                 const lastPart = currentParts[currentParts.length - 1];
-                // Добавляем текст к последней части
                 if (lastPart.text) {
                     lastPart.text += ' ' + trimmed;
                 } else {
@@ -92,7 +88,6 @@ function parseCodex(htmlContent) {
                 currentHtml.push(line);
             }
         } else if (isInArticle) {
-            // Если внутри статьи, но нет частей — добавляем в тело
             currentHtml.push(line);
         }
     }
@@ -110,7 +105,6 @@ function parseCodex(htmlContent) {
 
     // ===== ЕСЛИ СТАТЕЙ НЕ НАШЛИ — ПРОБУЕМ АЛЬТЕРНАТИВНЫЙ МЕТОД =====
     if (articles.length === 0) {
-        console.log('⚠️ Статей не найдено, пробуем альтернативный парсинг...');
         return parseCodexAlternative(htmlContent);
     }
 
@@ -133,7 +127,6 @@ function parseCodexAlternative(htmlContent) {
         const trimmed = block.trim();
         if (!trimmed) continue;
         
-        // Если блок начинается с номера — это новая статья
         const numMatch = trimmed.match(/^(\d+(?:\.\d+)*)/);
         if (numMatch) {
             if (currentNumber && currentText) {
@@ -165,4 +158,80 @@ function parseCodexAlternative(htmlContent) {
     return articles;
 }
 
-module.exports = { parseCodex };
+/**
+ * Конвертирует данные парсера в формат, совместимый с приложением
+ * (для использования в shared.js)
+ */
+function convertToAppFormat(parsedArticles) {
+    if (!parsedArticles || parsedArticles.length === 0) {
+        return { theoryText: '', penaltyArticles: [] };
+    }
+
+    const penaltyArticles = [];
+    let theoryText = '';
+
+    for (const article of parsedArticles) {
+        const id = article.number || '';
+        const title = article.title || '';
+        
+        // Проверяем, является ли статья теоретической (по номеру)
+        const numStr = id.split('.')[0] || id;
+        const num = parseInt(numStr);
+        let isTheory = false;
+        
+        // Для УК: статьи 1-5 — теория
+        if (!isNaN(num) && num <= 5) isTheory = true;
+        
+        // Если есть части
+        if (article.parts && article.parts.length > 0) {
+            const parts = [];
+            
+            for (const part of article.parts) {
+                const partNum = part.part || '';
+                let text = part.text || '';
+                let punishment = part.punishment || '';
+                
+                // Если текст содержит наказание — извлекаем его
+                const punishMatch = text.match(/Наказание[:\s]+([^\n]*)$/i);
+                if (punishMatch) {
+                    punishment = punishMatch[1].trim();
+                    text = text.replace(/\s*Наказание[:\s]+[^\n]*$/i, '').trim();
+                }
+                
+                if (text || punishment) {
+                    parts.push({
+                        id: partNum ? `ч. ${partNum}` : '',
+                        text: text,
+                        punishment: punishment
+                    });
+                }
+            }
+            
+            if (parts.length > 0) {
+                if (isTheory) {
+                    // Добавляем в теорию
+                    theoryText += `📌 Статья ${id}. ${title}\n`;
+                    for (const part of parts) {
+                        let line = '';
+                        if (part.id) line += `${part.id} `;
+                        if (part.text) line += `${part.text}`;
+                        if (part.punishment) line += ` Наказание: ${part.punishment}`;
+                        if (line.trim()) theoryText += `   ${line.trim()}\n`;
+                    }
+                    theoryText += '\n';
+                } else {
+                    // Добавляем в статьи с наказаниями
+                    penaltyArticles.push({
+                        id: id,
+                        title: title,
+                        parts: parts
+                    });
+                }
+            }
+        }
+    }
+
+    return { theoryText, penaltyArticles };
+}
+
+module.exports = { parseCodex, convertToAppFormat };
