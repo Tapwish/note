@@ -3,7 +3,7 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
-const { parseCodex } = require('./parser.js');
+const { parseCodex, convertToAppFormat } = require('./parser.js');
 
 const DATA_DIR = path.join(__dirname, '../data');
 try {
@@ -75,7 +75,7 @@ async function findCodexThreads(page, sectionUrl) {
 }
 
 // ============================================================
-// ГЛАВНАЯ ФУНКЦИЯ — КОПИРУЕТ ПОЛНЫЙ HTML
+// ГЛАВНАЯ ФУНКЦИЯ — КОПИРУЕТ ПОЛНЫЙ HTML И ПАРСИТ СТАТЬИ
 // ============================================================
 async function scrapeThread(page, url) {
     try {
@@ -83,14 +83,14 @@ async function scrapeThread(page, url) {
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
         await page.waitForSelector(SELECTORS.content, { timeout: 30000 });
 
-        // ===== КОПИРУЕМ ПОЛНЫЙ HTML =====
         const htmlContent = await page.evaluate((selector) => {
             const el = document.querySelector(selector);
             if (!el) return null;
             const clone = el.cloneNode(true);
             // Убираем цитаты
             clone.querySelectorAll('blockquote, .bbCodeBlock--quote, .quoteContainer').forEach(q => q.remove());
-            // Возвращаем HTML
+            // Убираем кнопки
+            clone.querySelectorAll('button, .button, .js-quote').forEach(b => b.remove());
             return clone.innerHTML;
         }, SELECTORS.content);
 
@@ -134,7 +134,10 @@ async function scrapeServer(server) {
             const html = await scrapeThread(page, thread.url);
             if (html) {
                 // ===== ПАРСИМ СТАТЬИ ИЗ HTML =====
-                const articles = parseCodex(html);
+                const parsedArticles = parseCodex(html);
+                
+                // ===== КОНВЕРТИРУЕМ В ФОРМАТ ПРИЛОЖЕНИЯ =====
+                const appData = convertToAppFormat(parsedArticles);
                 
                 const output = {
                     server: server.id,
@@ -145,14 +148,29 @@ async function scrapeServer(server) {
                     lastUpdate: new Date().toISOString(),
                     // ===== СОХРАНЯЕМ HTML =====
                     htmlContent: html,
-                    articles: articles,
-                    totalArticles: articles.length
+                    // ===== СОХРАНЯЕМ СТАТЬИ В ФОРМАТЕ ПРИЛОЖЕНИЯ =====
+                    articles: parsedArticles,
+                    // ===== ГОТОВЫЕ ДАННЫЕ ДЛЯ ПРИЛОЖЕНИЯ =====
+                    theoryText: appData.theoryText,
+                    penaltyArticles: appData.penaltyArticles,
+                    totalArticles: parsedArticles.length,
+                    penaltyCount: appData.penaltyArticles.length,
+                    theoryLines: appData.theoryText.split('\n').filter(l => l.trim()).length
                 };
 
                 const filePath = path.join(serverDir, `${type}.json`);
                 fs.writeFileSync(filePath, JSON.stringify(output, null, 2));
-                console.log(`✅ ${type.toUpperCase()} сохранён (${articles.length} статей, ${html.length} символов HTML)`);
-                results[type] = { success: true, articles: articles.length };
+                console.log(`✅ ${type.toUpperCase()} сохранён:`);
+                console.log(`   - Всего статей: ${parsedArticles.length}`);
+                console.log(`   - Статей с наказаниями: ${appData.penaltyArticles.length}`);
+                console.log(`   - Строк теории: ${appData.theoryText.split('\n').filter(l => l.trim()).length}`);
+                console.log(`   - HTML: ${html.length} символов`);
+                
+                results[type] = { 
+                    success: true, 
+                    articles: parsedArticles.length,
+                    penaltyArticles: appData.penaltyArticles.length
+                };
             } else {
                 console.log(`❌ ${type.toUpperCase()} не спарсен`);
                 results[type] = { success: false };
