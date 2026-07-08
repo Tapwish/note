@@ -1,59 +1,76 @@
-name: Update Laws
+name: Scrape Majestic codex
 
 on:
+  # запуск по расписанию — по умолчанию каждый день в 03:00 UTC (06:00 МСК)
   schedule:
-    - cron: '0 0 */3 * *'
+    - cron: '0 3 * * *'
+  # ручной запуск из вкладки Actions на GitHub
   workflow_dispatch:
+  # запуск при пуше в main, если поменялись сами скрипты (удобно для отладки)
+  push:
+    branches: [main]
+    paths:
+      - 'scrape.js'
+      - 'parser.js'
+      - 'package.json'
+      - '.github/workflows/scrape.yml'
 
+# чтобы workflow мог сам закоммитить обновлённый data/
 permissions:
   contents: write
 
+concurrency:
+  group: scrape-majestic-codex
+  cancel-in-progress: true
+
 jobs:
-  update:
+  scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout
+      - name: Checkout репозитория
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Установка Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Create parser.js in root
+      - name: Установка зависимостей
+        run: npm ci || npm install
+
+      # Puppeteer сам ставит Chromium через postinstall, но на ubuntu-latest
+      # иногда не хватает системных библиотек для его запуска — доустанавливаем.
+      - name: Системные зависимости для Chromium
         run: |
-          if [ -f scripts/parser.js ]; then
-            cp scripts/parser.js parser.js
-            echo "✅ Парсер скопирован в корень"
-          elif [ -f parser.js ]; then
-            echo "✅ Парсер уже в корне"
+          sudo apt-get update
+          sudo apt-get install -y \
+            libnss3 libatk-bridge2.0-0 libx11-xcomposite1 libxcomposite1 \
+            libxdamage1 libxrandr2 libgbm1 libasound2 libpangocairo-1.0-0 \
+            libpango-1.0-0 libatk1.0-0 libcups2 libxss1 libxtst6 \
+            fonts-liberation libappindicator3-1 xdg-utils
+
+      - name: Запуск скрапера
+        run: npm run scrape
+
+      - name: Коммит и пуш обновлённых данных
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "Изменений нет, пропускаем коммит"
           else
-            echo "❌ Парсер не найден!"
-            exit 1
+            git commit -m "chore: обновление кодекса ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+            git push
           fi
 
-      - name: Run parser
-        run: node parser.js
-
-      - name: Commit and push changes
-        run: |
-          git config user.name "law-bot"
-          git config user.email "law-bot@users.noreply.github.com"
-          
-          # === НОВЫЕ СТРОКИ ===
-          git stash push --include-untracked -m "auto-stash before pull"
-          git pull --rebase origin main
-          git stash pop || true
-          # === КОНЕЦ НОВЫХ СТРОК ===
-          
-          git add uk.json pk.json ak.json dk.json
-          
-          if git diff --staged --quiet; then
-            echo "📭 Нет изменений"
-          else
-            git commit -m "chore: автообновление законов $(date '+%Y-%m-%d')"
-            git push origin main
-          fi
+      - name: Загрузить отчёт как артефакт (на случай ошибки коммита)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-data
+          path: data/
+          retention-days: 7
