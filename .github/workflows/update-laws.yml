@@ -1,78 +1,42 @@
-name: Scrape Majestic codex
+name: Update Laws
 
 on:
-  # запуск по расписанию — по умолчанию каждый день в 03:00 UTC (06:00 МСК)
   schedule:
-    - cron: '0 3 * * *'
-  # ручной запуск из вкладки Actions на GitHub
-  workflow_dispatch:
-  # запуск при пуше в main, если поменялись сами скрипты (удобно для отладки)
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/scrape.js'
-      - 'scripts/parser.js'
-      - 'scripts/package.json'
-      - '.github/workflows/update-laws'
+    - cron: '0 3 */3 * *'
+  workflow_dispatch: {}
 
-# чтобы workflow мог сам закоммитить обновлённый data/
 permissions:
   contents: write
 
-concurrency:
-  group: scrape-majestic-codex
-  cancel-in-progress: true
-
 jobs:
-  scrape:
+  update-laws:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
-      - name: Checkout репозитория
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Установка Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
-      - name: Установка зависимостей
-        working-directory: scripts
+      - name: Install dependencies
         run: npm install
 
-      # Puppeteer сам ставит Chromium через postinstall, но на ubuntu-latest
-      # иногда не хватает системных библиотек для его запуска — доустанавливаем.
-      - name: Системные зависимости для Chromium
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libnss3 libatk-bridge2.0-0 libxcomposite1 \
-            libxdamage1 libxrandr2 libgbm1 libasound2t64 libpangocairo-1.0-0 \
-            libpango-1.0-0 libatk1.0-0t64 libcups2t64 libxss1 libxtst6 \
-            libx11-6 libxext6 libxfixes3 \
-            fonts-liberation xdg-utils
+      - name: Run scraper
+        run: node scripts/scrape.js
+        env:
+          FORCE_UPDATE: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
 
-      - name: Запуск скрапера
-        working-directory: scripts
-        run: npm run scrape
-
-      - name: Коммит и пуш обновлённых данных
+      - name: Commit and push if changed
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "law-bot"
+          git config user.email "law-bot@users.noreply.github.com"
           git add data/
           if git diff --cached --quiet; then
-            echo "Изменений нет, пропускаем коммит"
+            echo "📭 Изменений нет, коммит не нужен"
           else
-            git commit -m "chore: обновление кодекса ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+            git commit -m "chore: автообновление законов $(date -u +%Y-%m-%d)"
             git push
+            echo "✅ Изменения запушены"
           fi
-
-      - name: Загрузить отчёт как артефакт (на случай ошибки коммита)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scrape-data
-          path: data/
-          retention-days: 7
