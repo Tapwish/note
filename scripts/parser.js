@@ -1,4 +1,4 @@
-='use strict';
+'use strict';
 
 /**
  * Парсер, который извлекает статьи из HTML-кода
@@ -6,25 +6,28 @@
  */
 
 function parseCodex(htmlContent) {
-    // Разбиваем на строки
-    const lines = htmlContent.split('\n');
+    // Убираем лишние пробелы и переносы
+    const cleanHtml = htmlContent
+        .replace(/\s+/g, ' ')
+        .trim();
+
     const articles = [];
-    
-    let currentArticle = null;
-    let currentParts = [];
-    let currentHtml = [];
     let currentNumber = null;
     let currentTitle = '';
     let currentTag = null;
+    let currentParts = [];
+    let currentHtml = [];
     let isInArticle = false;
+
+    // Разбиваем HTML на строки
+    const lines = cleanHtml.split('\n');
 
     for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
-        // ===== 1. НАХОДИМ СТАТЬЮ =====
-        // "Статья 6.1 Название"
-        // "Статья 12.4 ★★★★★ [Федеральная] Название"
+        // ===== ИЩЕМ СТАТЬЮ =====
+        // Паттерн: Статья 6.1 Название
         const articleMatch = trimmed.match(/Статья\s+(\d+(?:\.\d+)*)\s*(?:\[([^\]]+)\])?\s*(.*)/i);
         if (articleMatch) {
             // Сохраняем предыдущую статью
@@ -33,7 +36,7 @@ function parseCodex(htmlContent) {
                     number: currentNumber,
                     title: currentTitle,
                     tag: currentTag,
-                    html: currentHtml.join('\n'),
+                    html: currentHtml.join(''),
                     parts: currentParts
                 });
                 currentParts = [];
@@ -48,12 +51,14 @@ function parseCodex(htmlContent) {
             continue;
         }
 
-        // ===== 2. НАХОДИМ ЧАСТЬ СТАТЬИ =====
-        // "ч.1 Текст"
-        // "ч. 1 Текст"
-        // "часть 1 Текст"
+        // ===== ИЩЕМ ЧАСТЬ СТАТЬИ =====
+        // Паттерн: ч.1 Текст
         const partMatch = trimmed.match(/ч\.?\s*(\d+)\s*[.)]?\s*(.*)/i);
         if (partMatch && isInArticle) {
+            // Если есть предыдущая часть — сохраняем её
+            if (currentParts.length > 0 && currentParts[currentParts.length - 1].text === '') {
+                // Пустая часть — пропускаем
+            }
             currentParts.push({
                 part: parseInt(partMatch[1], 10),
                 text: partMatch[2]?.trim() || '',
@@ -63,9 +68,7 @@ function parseCodex(htmlContent) {
             continue;
         }
 
-        // ===== 3. НАХОДИМ НАКАЗАНИЕ =====
-        // "Наказание: 5 лет ЛС"
-        // "Наказание - 5 лет ЛС"
+        // ===== ИЩЕМ НАКАЗАНИЕ =====
         const punishMatch = trimmed.match(/Наказание\s*[:.-]\s*(.*)/i);
         if (punishMatch && isInArticle && currentParts.length > 0) {
             const lastPart = currentParts[currentParts.length - 1];
@@ -74,7 +77,7 @@ function parseCodex(htmlContent) {
             continue;
         }
 
-        // ===== 4. ОБЫЧНЫЙ ТЕКСТ =====
+        // ===== ОБЫЧНЫЙ ТЕКСТ =====
         // Если строка не начинается с маркеров и мы внутри статьи — добавляем к последней части
         if (isInArticle && currentParts.length > 0) {
             // Если строка не является новой частью или наказанием
@@ -105,7 +108,7 @@ function parseCodex(htmlContent) {
         });
     }
 
-    // ===== 4.5 ЕСЛИ СТАТЕЙ НЕ НАШЛИ — ПРОБУЕМ АЛЬТЕРНАТИВНЫЙ МЕТОД =====
+    // ===== ЕСЛИ СТАТЕЙ НЕ НАШЛИ — ПРОБУЕМ АЛЬТЕРНАТИВНЫЙ МЕТОД =====
     if (articles.length === 0) {
         console.log('⚠️ Статей не найдено, пробуем альтернативный парсинг...');
         return parseCodexAlternative(htmlContent);
