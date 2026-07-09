@@ -1,44 +1,56 @@
-import cloudscraper
+import time
 from typing import Dict, Optional
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
 from utils.logger import logger
 from config import config
 
 
 class ForumParser:
-    """Парсер форума — находит кодексы по ключевым словам"""
+    """Парсер форума через Selenium — обходит Cloudflare"""
     
     def __init__(self, driver):
         self.driver = driver
-        self.session = cloudscraper.create_scraper(
-            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-        )
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
     
-    @retry(stop=stop_after_attempt(config.MAX_RETRIES), wait=wait_exponential(multiplier=1, min=1, max=16))
-    def fetch_page(self, url: str) -> Optional[str]:
-        """Загружает страницу через cloudscraper с повторными попытками"""
+    def fetch_page(self, url: str, wait_time: int = 8) -> Optional[str]:
+        """Загружает страницу через Selenium с ожиданием"""
         try:
-            response = self.session.get(url, timeout=(config.CONNECT_TIMEOUT, config.READ_TIMEOUT))
-            if response.status_code == 200:
-                return response.text
-            logger.warning(f"HTTP {response.status_code} при загрузке {url}")
-            return None
+            logger.info(f"  🌐 Загрузка: {url}")
+            self.driver.get(url)
+            
+            # Ждем загрузки контента
+            try:
+                WebDriverWait(self.driver, 20).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, 
+                        "div.structItem, div.message, article.message, div.thread, a[href*='/threads/']"))
+                )
+            except:
+                pass
+            
+            time.sleep(wait_time)
+            
+            # Проверяем, не Cloudflare ли это
+            html = self.driver.page_source
+            if "cf-browser-verification" in html or "Checking your browser" in html:
+                logger.warning("  ⚠️ Cloudflare защита, ждем...")
+                time.sleep(15)
+                self.driver.refresh()
+                time.sleep(10)
+                html = self.driver.page_source
+            
+            return html
+            
         except Exception as e:
-            logger.error(f"Ошибка загрузки {url}: {str(e)}")
-            raise
+            logger.error(f"  ❌ Ошибка загрузки {url}: {str(e)}")
+            return None
     
     def find_codexes_in_section(self, section_url: str) -> Dict[str, str]:
-        """
-        Находит все кодексы в разделе законодательной базы
-        Возвращает {UK: ссылка, AK: ссылка, ...}
-        """
+        """Находит все кодексы через Selenium"""
         logger.info("🔍 Поиск кодексов...")
         
-        html = self.fetch_page(section_url)
+        html = self.fetch_page(section_url, wait_time=8)
         if not html:
             logger.error("❌ Не удалось загрузить страницу")
             return {}
@@ -46,7 +58,7 @@ class ForumParser:
         soup = BeautifulSoup(html, 'lxml')
         found = {}
         
-        # Ищем все ссылки на темы
+        # Ищем ссылки на темы
         for a in soup.find_all('a', href=True):
             title = a.get_text().strip()
             href = a.get('href', '')
@@ -56,7 +68,6 @@ class ForumParser:
             if '/threads/' not in href:
                 continue
             
-            # Проверяем ключевые слова
             for codex_type, keywords in config.CODEX_KEYWORDS.items():
                 for keyword in keywords:
                     if keyword.lower() in title.lower():
@@ -66,32 +77,8 @@ class ForumParser:
                         logger.success(f"  ✅ Найден {codex_type}: {title}")
                         break
         
-        # Проверяем, все ли кодексы найдены
-        expected = set(config.CODEX_KEYWORDS.keys())
-        missing = expected - set(found.keys())
-        if missing:
-            logger.warning(f"  ⚠️ Не найдены: {', '.join(missing)}")
-        
         return found
     
     def fetch_codex_content(self, url: str) -> Optional[str]:
-        """Загружает HTML кодекса"""
-        html = self.fetch_page(url)
-        if not html:
-            return None
-        
-        soup = BeautifulSoup(html, 'lxml')
-        
-        # Ищем контент
-        content = soup.find('div', class_='message-content')
-        if not content:
-            content = soup.find('div', class_='bbWrapper')
-        if not content:
-            content = soup.find('div', class_='message-body')
-        if not content:
-            content = soup.find('article', class_='message')
-        
-        if content:
-            return str(content)
-        
-        return html
+        """Загружает кодекс через Selenium"""
+        return self.fetch_page(url, wait_time=5)
