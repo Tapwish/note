@@ -4,7 +4,7 @@ import sys
 import time
 import json
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -13,20 +13,17 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 from parsers.forum_parser import ForumParser
 from parsers.codex_parser import CodexParser
+from parsers.article_parser import ArticleParser
 from utils.logger import logger
-from utils.exporter import Exporter
-from utils.validator import Validator
-from models.law_models import ServerLaws, Codex, Article
 from config import config
 
 
 class MajesticLawParser:
     def __init__(self):
-        # ============================================================
-        # 🔥 СОЗДАЁМ ВСЕ ПАПКИ ДО ЗАПУСКА
-        # ============================================================
+        # СОЗДАЁМ ПАПКУ ДЛЯ ДАННЫХ
         self._ensure_directories()
         
+        # НАСТРАИВАЕМ БРАУЗЕР
         chrome_options = Options()
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -45,48 +42,41 @@ class MajesticLawParser:
         
         self.forum_parser = ForumParser(self.driver)
         self.codex_parser = CodexParser(self.driver)
-        self.exporter = Exporter(config.DATA_DIR)
-        self.validator = Validator()
+        self.article_parser = ArticleParser()
         
         self.servers_processed = 0
         self.total_articles = 0
         self.errors = []
         self.start_time = time.time()
+        
+        # Словарь для хранения данных по каждому кодексу
+        self.codex_data = {
+            'uk': {'theory': '', 'articles': []},
+            'pk': {'theory': '', 'articles': []},
+            'ak': {'theory': '', 'articles': []},
+            'dk': {'theory': '', 'articles': []}
+        }
     
     def _ensure_directories(self):
-        """Создаёт все необходимые папки и файлы"""
-        # Создаём папку data/laws
+        """Создаёт все необходимые папки"""
         os.makedirs(config.DATA_DIR, exist_ok=True)
         logger.info(f"📁 Папка создана: {config.DATA_DIR}")
-        
-        # Создаём report.json если его нет
-        report_path = config.REPORT_FILE
-        if not os.path.exists(report_path):
-            os.makedirs(os.path.dirname(report_path), exist_ok=True)
-            with open(report_path, 'w', encoding='utf-8') as f:
-                json.dump({
-                    "updatedAt": int(datetime.now().timestamp() * 1000),
-                    "servers_processed": 0,
-                    "total_articles": 0,
-                    "elapsedTime": 0
-                }, f, ensure_ascii=False, indent=2)
-            logger.info(f"📄 Создан report.json")
     
     def run(self):
         try:
             logger.info("🚀 Запуск Majestic RP Laws Parser (GitHub Actions)")
             start_time = time.time()
             
-            # ============================================================
-            # 🔥 ТВОЙ КОД ПАРСИНГА (ВЕСЬ!)
-            # ============================================================
+            # Обрабатываем каждый сервер
             for server in config.SERVERS:
                 self._process_server(server)
                 time.sleep(1)
             
             # ============================================================
-            # СОХРАНЯЕМ РЕЗУЛЬТАТЫ
+            # СОХРАНЯЕМ КАЖДЫЙ КОДЕКС В ОТДЕЛЬНЫЙ ФАЙЛ
             # ============================================================
+            self._save_all_codexes()
+            
             elapsed_time = time.time() - start_time
             self._create_report(elapsed_time)
             
@@ -118,46 +108,88 @@ class MajesticLawParser:
                 return
             
             # Парсим каждый кодекс
-            server_laws = ServerLaws(server_name=server_name)
             server_articles = 0
             
             for codex_type, codex_url in codex_links.items():
                 logger.info(f"📖 Парсинг {codex_type}...")
                 
-                result = self.codex_parser.parse_codex(codex_url, self.driver)
-                articles_data = result.get('articles', [])
+                # Получаем HTML-контент
+                html_content = self.codex_parser.get_codex_content(codex_url, self.driver)
                 
-                if articles_data:
-                    articles = [Article(**a) for a in articles_data]
-                    server_laws.data[codex_type] = Codex(url=codex_url, articles=articles)
+                if not html_content:
+                    logger.warning(f"  ⚠️ {codex_type}: не удалось загрузить")
+                    continue
+                
+                # Парсим HTML в текст
+                text_content = self.codex_parser.extract_text(html_content)
+                
+                if not text_content:
+                    logger.warning(f"  ⚠️ {codex_type}: не удалось извлечь текст")
+                    continue
+                
+                # Парсим текст в структурированные статьи
+                parsed_data = self.article_parser.parse(text_content, codex_type.lower())
+                
+                articles = parsed_data.get('articles', [])
+                theory = parsed_data.get('theory', '')
+                
+                if articles:
+                    # Сохраняем в общий словарь
+                    codex_key = codex_type.lower()
+                    if codex_key not in self.codex_data:
+                        self.codex_data[codex_key] = {'theory': '', 'articles': []}
+                    
+                    self.codex_data[codex_key]['theory'] = theory
+                    self.codex_data[codex_key]['articles'].extend(articles)
+                    
                     server_articles += len(articles)
                     self.total_articles += len(articles)
                     logger.success(f"  ✅ {codex_type}: {len(articles)} статей")
                 else:
                     logger.warning(f"  ⚠️ {codex_type}: 0 статей")
             
-            # Сохраняем JSON
             if server_articles > 0:
-                filename = self._get_filename(server_name)
-                filepath = os.path.join(config.DATA_DIR, filename)
-                
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(server_laws.to_dict(), f, ensure_ascii=False, indent=2)
-                
                 self.servers_processed += 1
-                logger.success(f"✅ {server_name}: {server_articles} статей -> {filename}")
+                logger.success(f"✅ {server_name}: {server_articles} статей")
             else:
-                logger.warning(f"⚠️ {server_name}: 0 статей, файл не сохранён")
+                logger.warning(f"⚠️ {server_name}: 0 статей")
                 
         except Exception as e:
             logger.error(f"❌ Ошибка: {str(e)}")
             self.errors.append(f"{server_name}: {str(e)}")
     
-    def _get_filename(self, server_name: str) -> str:
-        """Генерирует имя файла"""
-        safe_name = server_name.lower().replace(' ', '-')
-        safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '-')
-        return f"{safe_name}.json"
+    def _save_all_codexes(self):
+        """Сохраняет каждый кодекс в отдельный файл"""
+        logger.info("\n" + "="*50)
+        logger.info("💾 СОХРАНЕНИЕ КОДЕКСОВ В ОТДЕЛЬНЫЕ ФАЙЛЫ")
+        logger.info("="*50)
+        
+        # Маппинг названий
+        codex_names = {
+            'uk': 'Уголовный кодекс',
+            'pk': 'Процессуальный кодекс',
+            'ak': 'Административный кодекс',
+            'dk': 'Дорожный кодекс'
+        }
+        
+        for codex_key, data in self.codex_data.items():
+            if not data['articles']:
+                logger.warning(f"⚠️ {codex_names.get(codex_key, codex_key)}: нет статей, пропускаем")
+                continue
+            
+            filename = f"{codex_key}.json"
+            filepath = os.path.join(config.DATA_DIR, filename)
+            
+            # Структура файла
+            output = {
+                "theory": data['theory'],
+                "articles": data['articles']
+            }
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(output, f, ensure_ascii=False, indent=2)
+            
+            logger.success(f"✅ {codex_names.get(codex_key, codex_key)}: {len(data['articles'])} статей -> {filename}")
     
     def _create_report(self, elapsed_time: float):
         """Создаёт отчёт"""
@@ -166,7 +198,12 @@ class MajesticLawParser:
             "servers_processed": self.servers_processed,
             "total_articles": self.total_articles,
             "errors": self.errors,
-            "elapsedTime": round(elapsed_time, 2)
+            "elapsedTime": round(elapsed_time, 2),
+            "codexes": {
+                key: len(data['articles']) 
+                for key, data in self.codex_data.items() 
+                if data['articles']
+            }
         }
         
         os.makedirs(config.DATA_DIR, exist_ok=True)
