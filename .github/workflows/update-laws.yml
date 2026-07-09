@@ -1,42 +1,43 @@
-name: Update Laws
+name: Update Majestic RP Laws
 
 on:
   schedule:
-    - cron: '0 3 */3 * *'
-  workflow_dispatch: {}
-
-permissions:
-  contents: write
+    - cron: '0 */6 * * *'      # Каждые 6 часов
+  workflow_dispatch:            # Ручной запуск
 
 jobs:
-  update-laws:
+  scrape:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '20'
-
+          python-version: '3.12'
+      
       - name: Install dependencies
-        run: npm install
-
-      - name: Run scraper
-        run: node scripts/scrape.js
-        env:
-          FORCE_UPDATE: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
-
-      - name: Commit and push if changed
         run: |
-          git config user.name "law-bot"
-          git config user.email "law-bot@users.noreply.github.com"
-          git add data/
-          if git diff --cached --quiet; then
-            echo "📭 Изменений нет, коммит не нужен"
-          else
-            git commit -m "chore: автообновление законов $(date -u +%Y-%m-%d)"
-            git push
-            echo "✅ Изменения запушены"
-          fi
+          pip install -r requirements.txt
+      
+      - name: Install Chrome for headless
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser
+      
+      - name: Run parser
+        run: python main.py
+      
+      - name: Upload JSON results
+        uses: actions/upload-artifact@v4
+        with:
+          name: laws-json
+          path: data/laws/*.json
+      
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: report
+          path: data/report.json
