@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import json
-import subprocess
 from datetime import datetime
 from typing import Dict, List
 
@@ -27,35 +26,43 @@ class MajesticLawParser:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         self.forum_parser = ForumParser(self.driver)
         self.codex_parser = CodexParser(self.driver)
         
         self.total_articles = 0
         self.servers_processed = 0
-        
+        self.errors = []
+    
     def run(self):
         try:
             logger.info("🚀 Запуск Majestic RP Laws Parser")
             start_time = time.time()
             
-            # Создаём папку
+            # ============================================================
+            # СОЗДАЁМ ПАПКУ
+            # ============================================================
             os.makedirs(config.DATA_DIR, exist_ok=True)
             
-            # ... ТВОЙ КОД ПАРСИНГА ...
-            # (здесь ты парсишь серверы и сохраняешь JSON)
+            # ============================================================
+            # ПАРСИМ КАЖДЫЙ СЕРВЕР
+            # ============================================================
+            for server in config.SERVERS:
+                self._process_server(server)
+                time.sleep(1)
             
+            # ============================================================
+            # ОТЧЁТ
+            # ============================================================
             elapsed_time = time.time() - start_time
             logger.success(f"✅ Готово за {elapsed_time:.2f} сек")
             logger.success(f"✅ Серверов: {self.servers_processed}, статей: {self.total_articles}")
-            
-            # ============================================================
-            # 🔥 АВТОКОММИТ ПОСЛЕ ПАРСИНГА
-            # ============================================================
-            self._commit_and_push()
             
         except Exception as e:
             logger.error(f"❌ Ошибка: {str(e)}")
@@ -64,42 +71,68 @@ class MajesticLawParser:
         finally:
             self.driver.quit()
     
-    def _commit_and_push(self):
-        """Коммитит и пушит JSON-файлы в репозиторий"""
+    def _process_server(self, server: Dict[str, str]):
+        server_name = server.get('name', 'Unknown')
+        section_url = server.get('url', '')
+        
+        logger.info(f"\n{'='*50}")
+        logger.info(f"🏢 {server_name}")
+        logger.info(f"{'='*50}")
+        
         try:
-            logger.info("📤 Коммитим изменения...")
+            # ============================================================
+            # ИЩЕМ КОДЕКСЫ
+            # ============================================================
+            codex_links = self.forum_parser.find_codexes_in_section(section_url)
             
-            # Проверяем, есть ли изменения
-            result = subprocess.run(
-                ["git", "status", "--porcelain", "data/laws/"],
-                capture_output=True,
-                text=True
-            )
-            
-            if not result.stdout.strip():
-                logger.info("✅ Нет изменений для коммита")
+            if not codex_links:
+                logger.warning(f"⚠️ Кодексы не найдены для {server_name}")
                 return
             
-            # Добавляем файлы
-            subprocess.run(["git", "add", "data/laws/*.json"], check=True)
-            subprocess.run(["git", "add", "data/report.json"], check=True)
+            # ============================================================
+            # ПАРСИМ КАЖДЫЙ КОДЕКС
+            # ============================================================
+            server_laws = ServerLaws(server_name=server_name)
+            server_articles = 0
             
-            # Коммитим
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            subprocess.run(
-                ["git", "commit", "-m", f"🔄 Update laws {timestamp}"],
-                check=True
-            )
+            for codex_type, codex_url in codex_links.items():
+                logger.info(f"📖 Парсинг {codex_type}...")
+                
+                result = self.codex_parser.parse_codex(codex_url, self.driver)
+                articles_data = result.get('articles', [])
+                
+                if articles_data:
+                    articles = [Article(**a) for a in articles_data]
+                    server_laws.data[codex_type] = Codex(url=codex_url, articles=articles)
+                    server_articles += len(articles)
+                    self.total_articles += len(articles)
+                    logger.success(f"  ✅ {codex_type}: {len(articles)} статей")
+                else:
+                    logger.warning(f"  ⚠️ {codex_type}: 0 статей")
             
-            # Пушим
-            subprocess.run(["git", "push"], check=True)
-            
-            logger.success("✅ Изменения закоммичены и запушены!")
-            
-        except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Ошибка при коммите: {str(e)}")
+            # ============================================================
+            # СОХРАНЯЕМ JSON
+            # ============================================================
+            if server_articles > 0:
+                filename = self._get_filename(server_name)
+                filepath = os.path.join(config.DATA_DIR, filename)
+                
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(server_laws.to_dict(), f, ensure_ascii=False, indent=2)
+                
+                self.servers_processed += 1
+                logger.success(f"✅ {server_name}: {server_articles} статей -> {filename}")
+            else:
+                logger.warning(f"⚠️ {server_name}: 0 статей, файл не сохранён")
+                
         except Exception as e:
-            logger.error(f"❌ Неожиданная ошибка: {str(e)}")
+            logger.error(f"❌ Ошибка: {str(e)}")
+            self.errors.append(f"{server_name}: {str(e)}")
+    
+    def _get_filename(self, server_name: str) -> str:
+        safe_name = server_name.lower().replace(' ', '-')
+        safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '-')
+        return f"{safe_name}.json"
 
 
 def main():
