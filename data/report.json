@@ -1,7 +1,28 @@
 {
-  "updatedAt": 1783626126369,
-  "servers_processed": 19,
-  "total_articles": 10236,
-  "errors": [],
-  "elapsedTime": 543.14
+  "updatedAt": 1783629800934,
+  "servers_processed": 0,
+  "total_articles": 0,
+  "errors": [
+    "New York: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Detroit: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Chicago: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "San Francisco: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Atlanta: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "San Diego: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Los Angeles: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Miami: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Las Vegas: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Washington: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Dallas: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Boston: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Houston: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Seattle: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Phoenix: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Denver: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Portland: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Orlando: 'Config' object has no attribute 'CODEX_KEYWORDS'",
+    "Memphis: 'Config' object has no attribute 'CODEX_KEYWORDS'"
+  ],
+  "elapsedTime": 190.56,
+  "codexes": {}
 }
