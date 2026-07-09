@@ -1,86 +1,85 @@
-import time
-from typing import Any, Dict, List
+# parsers/codex_parser.py
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from utils.logger import logger
-from parsers.article_parser import ArticleParser
+import re
 
 
 class CodexParser:
-    """Парсит кодекс через Selenium — извлекает текст и статьи"""
-    
-    def __init__(self, driver=None):
+    def __init__(self, driver):
         self.driver = driver
-        self.article_parser = ArticleParser()
     
-    def parse_codex(self, url: str, driver=None) -> Dict[str, Any]:
+    def get_codex_content(self, url: str, driver) -> str:
         """
-        Парсит кодекс по URL
-        Возвращает {'url': str, 'articles': list}
+        Загружает страницу кодекса и извлекает HTML-контент
         """
-        logger.info("    📖 Парсинг статей...")
-        
-        if driver is None:
-            driver = self.driver
-        
-        if not driver:
-            logger.error("    ❌ Драйвер не передан")
-            return {"url": url, "articles": []}
-        
         try:
-            # Загружаем страницу
+            logger.info(f"  🌐 Загрузка: {url}")
             driver.get(url)
-            time.sleep(2)
             
-            # Ждем загрузки контента
-            try:
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR,
-                        "div.message-content, div.bbWrapper, div.message-body, article.message"))
-                )
-            except:
-                pass
+            # Ждём загрузки страницы
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "message-content"))
+            )
             
-            time.sleep(1)
+            # Получаем HTML
+            html = driver.page_source
+            return html
             
-            # Извлекаем текст разными способами
-            content = None
-            selectors = [
-                "div.message-content",
-                "div.bbWrapper",
-                "div.message-body",
-                "article.message",
-                "div.post-content"
-            ]
-            
-            for selector in selectors:
-                try:
-                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                    if elements:
-                        # Берем самый большой элемент
-                        max_elem = max(elements, key=lambda e: len(e.text))
-                        if len(max_elem.text) > 200:
-                            content = max_elem.text
-                            logger.info(f"    ✅ Найдено через {selector}: {len(content)} символов")
-                            break
-                except:
-                    pass
-            
-            # Если ничего не нашли — берем весь текст страницы
-            if not content or len(content) < 100:
-                content = driver.find_element(By.TAG_NAME, "body").text
-                logger.info(f"    ⚠️ Взят весь текст: {len(content)} символов")
-            
-            if content and len(content) > 100:
-                # Парсим статьи
-                articles = self.article_parser.parse(content)
-                logger.info(f"    📊 Найдено статей: {len(articles)}")
-                return {"url": url, "articles": articles}
-            else:
-                logger.warning("    ⚠️ Текст не найден или слишком короткий")
-                return {"url": url, "articles": []}
-        
         except Exception as e:
-            logger.error(f"    ❌ Ошибка парсинга: {str(e)}")
-            return {"url": url, "articles": []}
+            logger.error(f"  ❌ Ошибка загрузки: {str(e)}")
+            return None
+    
+    def extract_text(self, html: str) -> str:
+        """
+        Извлекает чистый текст из HTML кодекса
+        """
+        try:
+            from bs4 import BeautifulSoup
+            
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Ищем контент сообщения
+            content = soup.find('div', class_='message-content')
+            if not content:
+                content = soup.find('article', class_='message')
+            if not content:
+                content = soup.find('div', class_='bbWrapper')
+            
+            if not content:
+                logger.error("  ❌ Не найден контейнер с текстом")
+                return ""
+            
+            # Извлекаем текст
+            text = content.get_text(separator='\n', strip=True)
+            
+            # Чистим от лишних пробелов
+            text = re.sub(r'\n{3,}', '\n\n', text)
+            text = re.sub(r'[ \t]+', ' ', text)
+            
+            # Убираем мусорные строки
+            lines = text.split('\n')
+            cleaned_lines = []
+            for line in lines:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    cleaned_lines.append(line)
+            
+            result = '\n'.join(cleaned_lines)
+            logger.info(f"  ✅ Извлечено {len(result)} символов")
+            return result
+            
+        except Exception as e:
+            logger.error(f"  ❌ Ошибка извлечения текста: {str(e)}")
+            return ""
+    
+    def find_codex_links(self, section_url: str) -> dict:
+        """
+        Находит ссылки на кодексы в разделе
+        (используется forum_parser, но метод может быть здесь)
+        """
+        # Этот метод перенесён в forum_parser.py
+        # Оставлен для совместимости
+        return {}
