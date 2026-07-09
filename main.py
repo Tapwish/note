@@ -38,6 +38,9 @@ class MajesticLawParser:
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
+        # ============================================================
+        # ForumParser теперь использует Selenium
+        # ============================================================
         self.forum_parser = ForumParser(self.driver)
         self.codex_parser = CodexParser(self.driver)
         self.exporter = Exporter(config.DATA_DIR)
@@ -103,7 +106,6 @@ class MajesticLawParser:
                     logger.warning(f"  ⚠️ {codex_type}: 0 статей")
             
             if server_articles > 0:
-                # Сохраняем JSON с именем сервера
                 filename = self._get_filename(server_name)
                 filepath = os.path.join(config.DATA_DIR, filename)
                 os.makedirs(config.DATA_DIR, exist_ok=True)
@@ -118,7 +120,6 @@ class MajesticLawParser:
             logger.error(f"❌ Ошибка: {str(e)}")
     
     def _get_filename(self, server_name: str) -> str:
-        """Формирует имя файла из названия сервера"""
         safe_name = server_name.lower().replace(' ', '-')
         safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '-')
         return f"{safe_name}.json"
