@@ -1,187 +1,97 @@
-import time
-from typing import List, Dict, Optional
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import cloudscraper
+from typing import Dict, Optional
 from bs4 import BeautifulSoup
+from tenacity import retry, stop_after_attempt, wait_exponential
 from utils.logger import logger
 from config import config
 
 
 class ForumParser:
-    """Парсер форума с Edge для обхода Cloudflare"""
+    """Парсер форума — находит кодексы по ключевым словам"""
     
     def __init__(self, driver):
-        """Инициализирует парсер с Edge WebDriver"""
         self.driver = driver
+        self.session = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
+        )
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
     
-    def fetch_page(self, url: str, wait_time: int = 5) -> Optional[str]:
-        """
-        Загружает страницу через Edge с ожиданием загрузки
-        """
+    @retry(stop=stop_after_attempt(config.MAX_RETRIES), wait=wait_exponential(multiplier=1, min=1, max=16))
+    def fetch_page(self, url: str) -> Optional[str]:
+        """Загружает страницу через cloudscraper с повторными попытками"""
         try:
-            logger.info(f"  🌐 Загрузка: {url}")
-            self.driver.get(url)
-            
-            # Ждем, пока страница загрузится
-            time.sleep(wait_time)
-            
-            # Ждем появления контента
-            try:
-                WebDriverWait(self.driver, 20).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.structItem, div.message, article.message"))
-                )
-            except:
-                pass
-            
-            # Проверяем, не Cloudflare ли это
-            html = self.driver.page_source
-            if "cf-browser-verification" in html or "Checking your browser" in html:
-                logger.warning("  ⚠️ Cloudflare защита, ждем...")
-                time.sleep(15)
-                self.driver.refresh()
-                time.sleep(10)
-                html = self.driver.page_source
-            
-            return html
-            
-        except Exception as e:
-            logger.error(f"  ❌ Ошибка загрузки {url}: {str(e)}")
+            response = self.session.get(url, timeout=(config.CONNECT_TIMEOUT, config.READ_TIMEOUT))
+            if response.status_code == 200:
+                return response.text
+            logger.warning(f"HTTP {response.status_code} при загрузке {url}")
             return None
+        except Exception as e:
+            logger.error(f"Ошибка загрузки {url}: {str(e)}")
+            raise
     
     def find_codexes_in_section(self, section_url: str) -> Dict[str, str]:
         """
         Находит все кодексы в разделе законодательной базы
-        Ищет по точным названиям: "Уголовный кодекс", "Административный кодекс" и т.д.
+        Возвращает {UK: ссылка, AK: ссылка, ...}
         """
-        logger.info("🔍 Поиск кодексов по точным названиям...")
+        logger.info("🔍 Поиск кодексов...")
         
-        html = self.fetch_page(section_url, wait_time=8)
+        html = self.fetch_page(section_url)
         if not html:
             logger.error("❌ Не удалось загрузить страницу")
             return {}
         
         soup = BeautifulSoup(html, 'lxml')
-        found_codexes = {}
+        found = {}
         
-        # === Ищем все темы ===
-        threads = self._find_all_threads(soup)
-        logger.debug(f"Найдено {len(threads)} тем")
-        
-        # Показываем все темы для отладки
-        if threads:
-            titles = [t.get('title', '') for t in threads[:10]]
-            logger.info(f"  📋 Найденные темы: {', '.join(titles)}")
-        
-        for thread in threads:
-            title = thread.get('title', '')
-            link = thread.get('link', '')
+        # Ищем все ссылки на темы
+        for a in soup.find_all('a', href=True):
+            title = a.get_text().strip()
+            href = a.get('href', '')
             
-            if not title or not link:
+            if not title or not href:
+                continue
+            if '/threads/' not in href:
                 continue
             
-            # Проверяем точное совпадение с названиями кодексов
-            codex_type = self._match_exact_title(title)
-            if codex_type:
-                found_codexes[codex_type] = link
-                logger.success(f"  ✅ Найден {codex_type}: {title}")
-        
-        # === Если не нашли, ищем по всем ссылкам ===
-        if not found_codexes:
-            logger.debug("Поиск по всем ссылкам на странице...")
-            all_links = soup.find_all('a', href=True)
-            
-            for a in all_links:
-                title = a.get_text().strip()
-                href = a.get('href', '')
-                
-                if not title or not href:
-                    continue
-                
-                if '/threads/' not in href:
-                    continue
-                
-                codex_type = self._match_exact_title(title)
-                if codex_type:
-                    if not href.startswith('http'):
-                        href = f"{config.FORUM_URL}{href}"
-                    found_codexes[codex_type] = href
-                    logger.success(f"  ✅ Найден {codex_type}: {title}")
-        
-        # Проверяем результат
-        expected = set(config.CODEX_TITLES.keys())
-        found = set(found_codexes.keys())
-        missing = expected - found
-        
-        if missing:
-            logger.warning(f"  ⚠️ Не найдены кодексы: {', '.join(missing)}")
-        else:
-            logger.success(f"✅ Найдены все кодексы: {', '.join(found)}")
-        
-        return found_codexes
-    
-    def _find_all_threads(self, soup: BeautifulSoup) -> List[Dict[str, str]]:
-        """Находит все темы на странице"""
-        threads = []
-        
-        # Способ 1: structItem (XenForo 2)
-        for item in soup.find_all('div', class_='structItem'):
-            title_elem = item.find('a', class_='structItem-title')
-            if title_elem:
-                title = title_elem.get_text().strip()
-                link = title_elem.get('href', '')
-                if title and link:
-                    if not link.startswith('http'):
-                        link = f"{config.FORUM_URL}{link}"
-                    threads.append({'title': title, 'link': link})
-        
-        # Способ 2: li.thread
-        if not threads:
-            for item in soup.find_all('li', class_='thread'):
-                title_elem = item.find('a', class_='title')
-                if not title_elem:
-                    title_elem = item.find('a')
-                if title_elem:
-                    title = title_elem.get_text().strip()
-                    link = title_elem.get('href', '')
-                    if title and link:
-                        if not link.startswith('http'):
-                            link = f"{config.FORUM_URL}{link}"
-                        threads.append({'title': title, 'link': link})
-        
-        # Способ 3: Все ссылки с /threads/
-        if not threads:
-            for a in soup.find_all('a', href=True):
-                href = a.get('href', '')
-                if '/threads/' in href:
-                    title = a.get_text().strip()
-                    if title and len(title) > 5:
+            # Проверяем ключевые слова
+            for codex_type, keywords in config.CODEX_KEYWORDS.items():
+                for keyword in keywords:
+                    if keyword.lower() in title.lower():
                         if not href.startswith('http'):
                             href = f"{config.FORUM_URL}{href}"
-                        threads.append({'title': title, 'link': href})
+                        found[codex_type] = href
+                        logger.success(f"  ✅ Найден {codex_type}: {title}")
+                        break
         
-        # Удаляем дубликаты
-        seen = set()
-        unique_threads = []
-        for t in threads:
-            key = t['link']
-            if key not in seen:
-                seen.add(key)
-                unique_threads.append(t)
+        # Проверяем, все ли кодексы найдены
+        expected = set(config.CODEX_KEYWORDS.keys())
+        missing = expected - set(found.keys())
+        if missing:
+            logger.warning(f"  ⚠️ Не найдены: {', '.join(missing)}")
         
-        return unique_threads
-    
-    def _match_exact_title(self, title: str) -> Optional[str]:
-        """Проверяет точное совпадение с названиями кодексов"""
-        title_clean = title.strip()
-        
-        for codex_type, titles in config.CODEX_TITLES.items():
-            for exact_title in titles:
-                if exact_title.lower() in title_clean.lower():
-                    return codex_type
-        
-        return None
+        return found
     
     def fetch_codex_content(self, url: str) -> Optional[str]:
-        """Загрузка содержимого кодекса по ссылке (устаревший метод)"""
-        return self.fetch_page(url, wait_time=5)
+        """Загружает HTML кодекса"""
+        html = self.fetch_page(url)
+        if not html:
+            return None
+        
+        soup = BeautifulSoup(html, 'lxml')
+        
+        # Ищем контент
+        content = soup.find('div', class_='message-content')
+        if not content:
+            content = soup.find('div', class_='bbWrapper')
+        if not content:
+            content = soup.find('div', class_='message-body')
+        if not content:
+            content = soup.find('article', class_='message')
+        
+        if content:
+            return str(content)
+        
+        return html
