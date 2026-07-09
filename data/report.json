@@ -1,28 +1,13 @@
 {
-  "updatedAt": 1783630385061,
-  "servers_processed": 0,
-  "total_articles": 0,
-  "errors": [
-    "New York: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Detroit: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Chicago: 'CodexParser' object has no attribute 'get_codex_content'",
-    "San Francisco: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Atlanta: 'CodexParser' object has no attribute 'get_codex_content'",
-    "San Diego: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Los Angeles: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Miami: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Las Vegas: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Washington: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Dallas: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Boston: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Houston: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Seattle: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Phoenix: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Denver: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Portland: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Orlando: 'CodexParser' object has no attribute 'get_codex_content'",
-    "Memphis: 'CodexParser' object has no attribute 'get_codex_content'"
-  ],
-  "elapsedTime": 188.54,
-  "codexes": {}
+  "updatedAt": 1783630801977,
+  "servers_processed": 19,
+  "total_articles": 4292,
+  "errors": [],
+  "elapsedTime": 250.22,
+  "codexes": {
+    "uk": 1645,
+    "pk": 884,
+    "ak": 614,
+    "dk": 1149
+  }
 }
