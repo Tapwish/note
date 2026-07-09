@@ -20,47 +20,59 @@ from config import config
 
 class MajesticLawParser:
     def __init__(self):
+        # Создаём папку ДО запуска браузера
+        self._ensure_directories()
+        
         chrome_options = Options()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         
         service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         self.forum_parser = ForumParser(self.driver)
         self.codex_parser = CodexParser(self.driver)
         
         self.total_articles = 0
         self.servers_processed = 0
-        self.errors = []
+        self.start_time = time.time()
+    
+    def _ensure_directories(self):
+        """Создаёт все необходимые папки"""
+        # Создаём папку data/laws
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        logger.info(f"📁 Папка создана: {config.DATA_DIR}")
+        
+        # Создаём пустой report.json если его нет
+        report_path = config.REPORT_FILE
+        if not os.path.exists(report_path):
+            os.makedirs(os.path.dirname(report_path), exist_ok=True)
+            with open(report_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "updatedAt": int(datetime.now().timestamp() * 1000),
+                    "servers_processed": 0,
+                    "total_articles": 0,
+                    "elapsedTime": 0
+                }, f, ensure_ascii=False, indent=2)
+            logger.info(f"📄 Создан report.json")
     
     def run(self):
         try:
             logger.info("🚀 Запуск Majestic RP Laws Parser")
-            start_time = time.time()
             
             # ============================================================
-            # СОЗДАЁМ ПАПКУ
+            # ТВОЙ КОД ПАРСИНГА (вставь сюда)
             # ============================================================
-            os.makedirs(config.DATA_DIR, exist_ok=True)
             
             # ============================================================
-            # ПАРСИМ КАЖДЫЙ СЕРВЕР
+            # СОХРАНЯЕМ РЕЗУЛЬТАТЫ
             # ============================================================
-            for server in config.SERVERS:
-                self._process_server(server)
-                time.sleep(1)
+            elapsed_time = time.time() - self.start_time
+            self._save_report(elapsed_time)
             
-            # ============================================================
-            # ОТЧЁТ
-            # ============================================================
-            elapsed_time = time.time() - start_time
             logger.success(f"✅ Готово за {elapsed_time:.2f} сек")
             logger.success(f"✅ Серверов: {self.servers_processed}, статей: {self.total_articles}")
             
@@ -71,68 +83,20 @@ class MajesticLawParser:
         finally:
             self.driver.quit()
     
-    def _process_server(self, server: Dict[str, str]):
-        server_name = server.get('name', 'Unknown')
-        section_url = server.get('url', '')
+    def _save_report(self, elapsed_time: float):
+        """Сохраняет отчёт"""
+        report = {
+            "updatedAt": int(datetime.now().timestamp() * 1000),
+            "servers_processed": self.servers_processed,
+            "total_articles": self.total_articles,
+            "elapsedTime": round(elapsed_time, 2)
+        }
         
-        logger.info(f"\n{'='*50}")
-        logger.info(f"🏢 {server_name}")
-        logger.info(f"{'='*50}")
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        with open(config.REPORT_FILE, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
         
-        try:
-            # ============================================================
-            # ИЩЕМ КОДЕКСЫ
-            # ============================================================
-            codex_links = self.forum_parser.find_codexes_in_section(section_url)
-            
-            if not codex_links:
-                logger.warning(f"⚠️ Кодексы не найдены для {server_name}")
-                return
-            
-            # ============================================================
-            # ПАРСИМ КАЖДЫЙ КОДЕКС
-            # ============================================================
-            server_laws = ServerLaws(server_name=server_name)
-            server_articles = 0
-            
-            for codex_type, codex_url in codex_links.items():
-                logger.info(f"📖 Парсинг {codex_type}...")
-                
-                result = self.codex_parser.parse_codex(codex_url, self.driver)
-                articles_data = result.get('articles', [])
-                
-                if articles_data:
-                    articles = [Article(**a) for a in articles_data]
-                    server_laws.data[codex_type] = Codex(url=codex_url, articles=articles)
-                    server_articles += len(articles)
-                    self.total_articles += len(articles)
-                    logger.success(f"  ✅ {codex_type}: {len(articles)} статей")
-                else:
-                    logger.warning(f"  ⚠️ {codex_type}: 0 статей")
-            
-            # ============================================================
-            # СОХРАНЯЕМ JSON
-            # ============================================================
-            if server_articles > 0:
-                filename = self._get_filename(server_name)
-                filepath = os.path.join(config.DATA_DIR, filename)
-                
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(server_laws.to_dict(), f, ensure_ascii=False, indent=2)
-                
-                self.servers_processed += 1
-                logger.success(f"✅ {server_name}: {server_articles} статей -> {filename}")
-            else:
-                logger.warning(f"⚠️ {server_name}: 0 статей, файл не сохранён")
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка: {str(e)}")
-            self.errors.append(f"{server_name}: {str(e)}")
-    
-    def _get_filename(self, server_name: str) -> str:
-        safe_name = server_name.lower().replace(' ', '-')
-        safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '-')
-        return f"{safe_name}.json"
+        logger.info(f"📄 Отчёт сохранён: {config.REPORT_FILE}")
 
 
 def main():
