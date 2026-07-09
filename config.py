@@ -6,6 +6,9 @@ class Config:
     FORUM_URL: str = "https://forum.majestic-rp.ru/"
     BASE_URL: str = "https://forum.majestic-rp.ru/"
     
+    # ================================================================
+    # СПИСОК СЕРВЕРОВ (ВСЕ 19)
+    # ================================================================
     SERVERS: List[Dict[str, str]] = field(default_factory=lambda: [
         {"name": "New York", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.84/"},
         {"name": "Detroit", "url": "https://forum.majestic-rp.ru/forums/kodeksy.353/"},
@@ -25,22 +28,31 @@ class Config:
         {"name": "Denver", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1276/"},
         {"name": "Portland", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1338/"},
         {"name": "Orlando", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1405/"},
-        {"name": "Memphis", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1471/"},
+        {"name": "Memphis", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1471/"}
     ])
     
-    CODEX_KEYWORDS: Dict[str, List[str]] = field(default_factory=lambda: {
-        "UK": ["уголовный кодекс", "ук", "уголовный"],
-        "AK": ["административный кодекс", "ак", "административный"],
-        "PK": ["процессуальный кодекс", "пк", "процессуальный"],
-        "DK": ["дорожный кодекс", "дк", "дорожный"]
+    # ================================================================
+    # ТОЧНЫЕ НАЗВАНИЯ КОДЕКСОВ (ЧТОБЫ НЕ ПУТАТЬ С ЗАКОНАМИ)
+    # ================================================================
+    CODEX_TITLES: Dict[str, List[str]] = field(default_factory=lambda: {
+        "UK": ["Уголовный кодекс", "Уголовный Кодекс"],
+        "AK": ["Административный кодекс", "Административный Кодекс"],
+        "PK": ["Процессуальный кодекс", "Процессуальный Кодекс"],
+        "DK": ["Дорожный кодекс", "Дорожный Кодекс", "Дорожный Кодекс Штата"]
     })
     
+    # ================================================================
+    # ПУТИ (СОЗДАЮТСЯ АВТОМАТИЧЕСКИ)
+    # ================================================================
+    DATA_DIR: str = "data/laws"
+    REPORT_FILE: str = "data/report.json"
+    
+    # ================================================================
+    # НАСТРОЙКИ ПАРСИНГА
+    # ================================================================
     REQUEST_DELAY: float = 1.0
     MAX_RETRIES: int = 5
     CONNECT_TIMEOUT: int = 30
     READ_TIMEOUT: int = 60
-    
-    DATA_DIR: str = "data/laws"
-    REPORT_FILE: str = "data/report.json"
 
 config = Config()
