@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import json
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -49,18 +50,21 @@ class MajesticLawParser:
         self.errors = []
         self.start_time = time.time()
         
-        # Словарь для хранения данных по каждому кодексу
-        self.codex_data = {
-            'uk': {'theory': '', 'articles': []},
-            'pk': {'theory': '', 'articles': []},
-            'ak': {'theory': '', 'articles': []},
-            'dk': {'theory': '', 'articles': []}
-        }
+        # Данные по каждому серверу
+        self.servers_data = {}
     
     def _ensure_directories(self):
         """Создаёт все необходимые папки"""
         os.makedirs(config.DATA_DIR, exist_ok=True)
         logger.info(f"📁 Папка создана: {config.DATA_DIR}")
+    
+    def _get_server_folder(self, server_name: str) -> str:
+        """Генерирует имя папки для сервера"""
+        # Приводим к нижнему регистру, заменяем пробелы на дефисы
+        folder_name = server_name.lower().replace(' ', '-')
+        # Убираем спецсимволы
+        folder_name = re.sub(r'[^a-z0-9-]', '', folder_name)
+        return folder_name
     
     def run(self):
         try:
@@ -73,9 +77,9 @@ class MajesticLawParser:
                 time.sleep(1)
             
             # ============================================================
-            # СОХРАНЯЕМ КАЖДЫЙ КОДЕКС В ОТДЕЛЬНЫЙ ФАЙЛ
+            # СОХРАНЯЕМ КАЖДЫЙ СЕРВЕР В ОТДЕЛЬНУЮ ПАПКУ
             # ============================================================
-            self._save_all_codexes()
+            self._save_all_servers()
             
             elapsed_time = time.time() - start_time
             self._create_report(elapsed_time)
@@ -107,9 +111,16 @@ class MajesticLawParser:
                 logger.warning(f"⚠️ Кодексы не найдены для {server_name}")
                 return
             
-            # Парсим каждый кодекс
+            # Данные для этого сервера
+            server_data = {
+                'name': server_name,
+                'url': section_url,
+                'codexes': {}
+            }
+            
             server_articles = 0
             
+            # Парсим каждый кодекс
             for codex_type, codex_url in codex_links.items():
                 logger.info(f"📖 Парсинг {codex_type}...")
                 
@@ -134,13 +145,12 @@ class MajesticLawParser:
                 theory = parsed_data.get('theory', '')
                 
                 if articles:
-                    # Сохраняем в общий словарь
-                    codex_key = codex_type.lower()
-                    if codex_key not in self.codex_data:
-                        self.codex_data[codex_key] = {'theory': '', 'articles': []}
-                    
-                    self.codex_data[codex_key]['theory'] = theory
-                    self.codex_data[codex_key]['articles'].extend(articles)
+                    # Сохраняем в данные сервера
+                    server_data['codexes'][codex_type.lower()] = {
+                        'theory': theory,
+                        'articles': articles,
+                        'url': codex_url
+                    }
                     
                     server_articles += len(articles)
                     self.total_articles += len(articles)
@@ -149,64 +159,81 @@ class MajesticLawParser:
                     logger.warning(f"  ⚠️ {codex_type}: 0 статей")
             
             if server_articles > 0:
+                # Сохраняем данные сервера
+                folder_name = self._get_server_folder(server_name)
+                self.servers_data[folder_name] = server_data
                 self.servers_processed += 1
-                logger.success(f"✅ {server_name}: {server_articles} статей")
+                logger.success(f"✅ {server_name}: {server_articles} статей -> папка {folder_name}")
             else:
-                logger.warning(f"⚠️ {server_name}: 0 статей")
+                logger.warning(f"⚠️ {server_name}: 0 статей, пропускаем")
                 
         except Exception as e:
             logger.error(f"❌ Ошибка: {str(e)}")
             self.errors.append(f"{server_name}: {str(e)}")
     
-    def _save_all_codexes(self):
-        """Сохраняет каждый кодекс в отдельный файл"""
+    def _save_all_servers(self):
+        """Сохраняет каждый сервер в отдельную папку"""
         logger.info("\n" + "="*50)
-        logger.info("💾 СОХРАНЕНИЕ КОДЕКСОВ В ОТДЕЛЬНЫЕ ФАЙЛЫ")
+        logger.info("💾 СОХРАНЕНИЕ СЕРВЕРОВ В ОТДЕЛЬНЫЕ ПАПКИ")
         logger.info("="*50)
         
-        # Маппинг названий
-        codex_names = {
-            'uk': 'Уголовный кодекс',
-            'pk': 'Процессуальный кодекс',
-            'ak': 'Административный кодекс',
-            'dk': 'Дорожный кодекс'
-        }
-        
-        for codex_key, data in self.codex_data.items():
-            if not data['articles']:
-                logger.warning(f"⚠️ {codex_names.get(codex_key, codex_key)}: нет статей, пропускаем")
-                continue
+        for folder_name, server_data in self.servers_data.items():
+            # Создаём папку для сервера
+            server_folder = os.path.join(config.DATA_DIR, folder_name)
+            os.makedirs(server_folder, exist_ok=True)
             
-            filename = f"{codex_key}.json"
-            filepath = os.path.join(config.DATA_DIR, filename)
+            logger.info(f"\n📁 {server_data['name']} -> {folder_name}/")
             
-            # Структура файла
-            output = {
-                "theory": data['theory'],
-                "articles": data['articles']
+            # Сохраняем каждый кодекс
+            for codex_key, codex_data in server_data['codexes'].items():
+                filename = f"{codex_key}.json"
+                filepath = os.path.join(server_folder, filename)
+                
+                # Структура файла
+                output = {
+                    "theory": codex_data['theory'],
+                    "articles": codex_data['articles'],
+                    "url": codex_data.get('url', '')
+                }
+                
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(output, f, ensure_ascii=False, indent=2)
+                
+                logger.info(f"  ✅ {codex_key.upper()}: {len(codex_data['articles'])} статей -> {filename}")
+            
+            # Сохраняем метаданные сервера
+            meta_path = os.path.join(server_folder, '_meta.json')
+            meta = {
+                "name": server_data['name'],
+                "url": server_data['url'],
+                "codexes": list(server_data['codexes'].keys()),
+                "total_articles": sum(len(c['articles']) for c in server_data['codexes'].values()),
+                "updatedAt": int(datetime.now().timestamp() * 1000)
             }
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(output, f, ensure_ascii=False, indent=2)
-            
-            logger.success(f"✅ {codex_names.get(codex_key, codex_key)}: {len(data['articles'])} статей -> {filename}")
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
     
     def _create_report(self, elapsed_time: float):
-        """Создаёт отчёт"""
+        """Создаёт общий отчёт"""
         report = {
             "updatedAt": int(datetime.now().timestamp() * 1000),
             "servers_processed": self.servers_processed,
             "total_articles": self.total_articles,
             "errors": self.errors,
             "elapsedTime": round(elapsed_time, 2),
-            "codexes": {
-                key: len(data['articles']) 
-                for key, data in self.codex_data.items() 
-                if data['articles']
-            }
+            "servers": {}
         }
         
-        os.makedirs(config.DATA_DIR, exist_ok=True)
+        for folder_name, server_data in self.servers_data.items():
+            report["servers"][folder_name] = {
+                "name": server_data['name'],
+                "codexes": {
+                    key: len(data['articles'])
+                    for key, data in server_data['codexes'].items()
+                },
+                "total": sum(len(c['articles']) for c in server_data['codexes'].values())
+            }
+        
         with open(config.REPORT_FILE, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         
