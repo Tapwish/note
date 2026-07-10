@@ -8,22 +8,17 @@ from typing import Any, Optional, List, Dict, Tuple
 class ArticleParser:
     """
     Парсит текст кодекса в структурированные статьи
-    Выходные поля: id, code, title, text, penalty, parts
     """
     
     @staticmethod
     def parse(text: str, codex_type: str = 'uk') -> Dict[str, Any]:
         """
         Парсит текст кодекса в структурированный JSON
-        Возвращает: {
-            "theory": "...",
-            "articles": [...]
-        }
         """
         if not text or len(text.strip()) < 50:
             return {"theory": "", "articles": []}
         
-        # 1. ИЗВЛЕКАЕМ ТЕОРИЮ (до первой статьи с наказанием)
+        # 1. ИЗВЛЕКАЕМ ТЕОРИЮ
         theory, remaining = ArticleParser._extract_theory(text)
         
         # 2. РАЗБИВАЕМ НА БЛОКИ СТАТЕЙ
@@ -32,17 +27,14 @@ class ArticleParser:
         # 3. ПАРСИМ КАЖДЫЙ БЛОК
         all_articles = []
         for block in blocks:
-            parsed = ArticleParser._parse_article_block(block, codex_type)
+            parsed = ArticleParser._parse_article_block(block)
             if parsed:
                 all_articles.extend(parsed)
         
-        # 4. УДАЛЯЕМ ДУБЛИКАТЫ
-        all_articles = ArticleParser._remove_duplicates(all_articles)
+        # 4. ОБЪЕДИНЯЕМ ДУБЛИРУЮЩИЕСЯ СТАТЬИ ПО КОДУ
+        all_articles = ArticleParser._merge_duplicate_articles(all_articles)
         
-        # 5. СОРТИРУЕМ СТАТЬИ
-        all_articles = ArticleParser._sort_articles(all_articles)
-        
-        # 6. ДОБАВЛЯЕМ ID
+        # 5. ДОБАВЛЯЕМ ID
         for i, article in enumerate(all_articles):
             if 'id' not in article:
                 article['id'] = f"{codex_type}-{i+1}"
@@ -53,14 +45,12 @@ class ArticleParser:
         }
     
     # ================================================================
-    # 1. ИЗВЛЕЧЕНИЕ ТЕОРИИ (ДО ПЕРВОЙ СТАТЬИ С НАКАЗАНИЕМ)
+    # 1. ИЗВЛЕЧЕНИЕ ТЕОРИИ
     # ================================================================
     
     @staticmethod
     def _extract_theory(text: str) -> Tuple[str, str]:
-        """
-        Извлекает теорию до первой статьи, которая содержит наказание
-        """
+        """Извлекает теорию до первой статьи с наказанием"""
         lines = text.split('\n')
         theory_lines = []
         remaining_lines = []
@@ -69,8 +59,10 @@ class ArticleParser:
         for i, line in enumerate(lines):
             stripped = line.strip()
             
+            # Проверяем начало статьи
             if re.match(r"^(?:Статья|Ст\.?)\s*№?\s*[\d\.]+", stripped, re.IGNORECASE):
-                check_lines = lines[i:min(i+15, len(lines))]
+                # Проверяем следующие 10 строк на наличие наказания
+                check_lines = lines[i:min(i+10, len(lines))]
                 check_text = '\n'.join(check_lines)
                 
                 has_penalty = ArticleParser._has_penalty(check_text)
@@ -99,11 +91,7 @@ class ArticleParser:
     @staticmethod
     def _has_penalty(text: str) -> bool:
         """Проверяет, есть ли в тексте наказание"""
-        if re.search(r'(?:Наказание|Штраф|Санкция|Ответственность)', text, re.IGNORECASE):
-            return True
-        if re.search(r'"penalty"\s*:\s*"[^"]+"', text):
-            return True
-        return False
+        return bool(re.search(r'(?:Наказание|Штраф|Санкция|Ответственность)', text, re.IGNORECASE))
     
     # ================================================================
     # 2. РАЗБИВКА НА БЛОКИ СТАТЕЙ
@@ -125,14 +113,9 @@ class ArticleParser:
             r"^ОБЩАЯ\s+ЧАСТЬ",
             r"^Раздел\s+\d+",
             r"^Глава\s+\d+",
-            r"^РАЗДЕЛ\s+\d+",
-            r"^ГЛАВА\s+\d+",
             r"^Комментарий",
             r"^Примечание",
-            r"^Последнее редактирование",
-            r"^Список использованных источников",
-            r"^Источники:",
-            r"^Ссылки:",
+            r"^Преамбула",
         ]
         
         for line in lines:
@@ -152,6 +135,7 @@ class ArticleParser:
             if is_skip:
                 continue
             
+            # Проверяем начало статьи
             if re.match(r"^(?:Статья|Ст\.?)\s*№?\s*[\d\.]+", stripped, re.IGNORECASE):
                 if current:
                     blocks.append("\n".join(current))
@@ -170,11 +154,12 @@ class ArticleParser:
     # ================================================================
     
     @staticmethod
-    def _parse_article_block(block: str, codex_type: str) -> List[Dict[str, Any]]:
+    def _parse_article_block(block: str) -> List[Dict[str, Any]]:
         """Парсит один блок статьи"""
         lines = block.split("\n")
         first_line = lines[0].strip() if lines else ""
         
+        # Ищем номер статьи
         match = re.match(
             r"^(?:Статья|Ст\.?)\s*№?\s*([\d\.]+)\s*[.．]?\s*(.*)",
             first_line,
@@ -184,10 +169,14 @@ class ArticleParser:
         if not match:
             return []
         
-        raw_code = match.group(1).strip()
-        code = raw_code.rstrip('.').strip()
+        # Получаем основной номер статьи (без частей)
+        raw_code = match.group(1).strip().rstrip('.').strip()
+        # Извлекаем только основную часть (до точки)
+        main_code = raw_code.split('.')[0] if '.' in raw_code else raw_code
         
         title = match.group(2).strip()
+        
+        # Если title нет, ищем в следующих строках
         if not title and len(lines) > 1:
             for next_line in lines[1:]:
                 stripped = next_line.strip()
@@ -195,98 +184,123 @@ class ArticleParser:
                     title = stripped
                     break
         
+        # Очищаем title от мусора
         title = ArticleParser._clean_title(title)
         
-        penalty_from_title = ArticleParser._extract_penalty_from_text(title)
-        if penalty_from_title:
-            title = re.sub(r'\s*(?:Наказание|Штраф|Санкция)\s*[:–-][^\n]+', '', title, flags=re.IGNORECASE).strip()
+        # Извлекаем наказание из заголовка
+        penalty_from_title = None
+        if title:
+            penalty_match = re.search(r'(?:Наказание|Штраф|Санкция)\s*[:–-]\s*([^\n]+)', title, re.IGNORECASE)
+            if penalty_match:
+                penalty_from_title = penalty_match.group(1).strip()
+                title = re.sub(r'\s*(?:Наказание|Штраф|Санкция)\s*[:–-][^\n]+', '', title, flags=re.IGNORECASE).strip()
         
+        # Собираем тело статьи
         start_idx = 2 if title and not match.group(2) else 1
         body_lines = []
         
         for i in range(start_idx, len(lines)):
             line = lines[i]
-            stripped = line.strip()
-            if stripped:
+            if line.strip():
                 body_lines.append(line)
         
         body = "\n".join(body_lines)
         
+        # Если тело пустое
         if not body.strip():
             return [{
-                "id": "",
-                "code": code,
+                "code": main_code,
                 "title": title or "Без названия",
                 "text": "",
                 "penalty": penalty_from_title,
                 "parts": []
             }]
         
-        penalty_from_body = ArticleParser._extract_penalty_from_text(body)
+        # Извлекаем наказание из тела
+        penalty_from_body = ArticleParser._extract_penalty(body)
         clean_body = ArticleParser._remove_penalty_markers(body)
+        clean_body = ArticleParser._clean_text(clean_body)
         
+        # Проверяем, есть ли в теле маркеры частей
         parts = ArticleParser._split_into_parts(clean_body)
         
-        if not parts:
+        # Если есть части
+        if parts and len(parts) > 1:
+            parts_list = []
+            for part_marker, part_text in parts:
+                part_penalty = ArticleParser._extract_penalty(part_text)
+                part_clean = ArticleParser._remove_penalty_markers(part_text)
+                part_clean = ArticleParser._clean_text(part_clean)
+                
+                parts_list.append({
+                    "id": part_marker if part_marker else "",
+                    "text": part_clean,
+                    "penalty": part_penalty or penalty_from_body or penalty_from_title,
+                })
+            
+            # Если у статьи есть общее наказание, но у частей нет — добавляем его
+            general_penalty = penalty_from_body or penalty_from_title
+            if general_penalty:
+                for part in parts_list:
+                    if not part['penalty']:
+                        part['penalty'] = general_penalty
+            
             return [{
-                "id": "",
-                "code": code,
+                "code": main_code,
                 "title": title or "Без названия",
-                "text": ArticleParser._clean_text(clean_body),
-                "penalty": penalty_from_body or penalty_from_title,
-                "parts": []
+                "text": "",
+                "penalty": general_penalty,
+                "parts": parts_list
             }]
         
-        return ArticleParser._group_parts(code, title, parts, penalty_from_body, penalty_from_title)
+        # Если нет частей — одна статья
+        return [{
+            "code": main_code,
+            "title": title or "Без названия",
+            "text": clean_body,
+            "penalty": penalty_from_body or penalty_from_title,
+            "parts": []
+        }]
     
     # ================================================================
-    # 4. ГРУППИРОВКА ЧАСТЕЙ
+    # 4. ОБЪЕДИНЕНИЕ ДУБЛИКАТОВ
     # ================================================================
     
     @staticmethod
-    def _group_parts(code: str, title: str, parts: List[Tuple[str, str]], 
-                     penalty_from_body: Optional[str], penalty_from_title: Optional[str]) -> List[Dict[str, Any]]:
-        """Группирует части в одну статью с полем parts"""
+    def _merge_duplicate_articles(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Объединяет дублирующиеся статьи по коду"""
+        merged = {}
         
-        main_code = code
-        if '.' in code:
-            main_code = code.split('.')[0]
-        elif 'ч' in code:
-            main_code = code.split('ч')[0].strip()
-        elif ' ' in code:
-            main_code = code.split(' ')[0].strip()
-        
-        parts_list = []
-        for part_marker, part_text in parts:
-            clean_text = ArticleParser._clean_part_text(part_text)
+        for article in articles:
+            code = article.get('code', '')
+            if not code:
+                continue
             
-            part_penalty = ArticleParser._extract_penalty_from_text(part_text)
-            if not part_penalty:
-                part_penalty = penalty_from_body or penalty_from_title
+            if code not in merged:
+                merged[code] = {
+                    'code': code,
+                    'title': article.get('title', ''),
+                    'text': '',
+                    'penalty': article.get('penalty', ''),
+                    'parts': []
+                }
             
-            part_id = part_marker if part_marker else ""
+            # Если у статьи есть части — добавляем их
+            if article.get('parts'):
+                merged[code]['parts'].extend(article['parts'])
+            elif article.get('text'):
+                # Если нет частей, но есть текст — добавляем как часть
+                merged[code]['parts'].append({
+                    'id': '',
+                    'text': article['text'],
+                    'penalty': article.get('penalty', '')
+                })
             
-            parts_list.append({
-                "id": part_id,
-                "text": clean_text,
-                "penalty": part_penalty
-            })
+            # Обновляем наказание, если его нет
+            if not merged[code]['penalty'] and article.get('penalty'):
+                merged[code]['penalty'] = article['penalty']
         
-        general_penalty = penalty_from_body or penalty_from_title
-        
-        if general_penalty:
-            for part in parts_list:
-                if not part['penalty']:
-                    part['penalty'] = general_penalty
-        
-        return [{
-            "id": "",
-            "code": main_code,
-            "title": title or "Без названия",
-            "text": "",
-            "penalty": general_penalty,
-            "parts": parts_list
-        }]
+        return list(merged.values())
     
     # ================================================================
     # 5. ОЧИСТКА ТЕКСТА
@@ -298,14 +312,18 @@ class ArticleParser:
         if not title:
             return ""
         
+        # Убираем маркеры
         title = re.sub(r'^ч\.\s*', '', title, flags=re.IGNORECASE)
         title = re.sub(r'^[а-яА-Я][).]\s*', '', title)
         title = re.sub(r'^[IVXLCDM]+[.．]\s*', '', title)
         title = re.sub(r'^[⭐★☆✨]+\s*', '', title)
         title = re.sub(r'^\d+[.．)]\s*', '', title)
+        title = re.sub(r'^\[.*?\]\s*', '', title)  # Убираем [Федеральная/Региональная]
         
+        # Убираем "Наказание" из заголовка
         title = re.sub(r'\s*(?:Наказание|Штраф|Санкция)\s*[:–-][^\n]+', '', title, flags=re.IGNORECASE).strip()
         
+        # Убираем лишние запятые и точки
         title = title.rstrip('.,').strip()
         title = re.sub(r',\s*$', '', title)
         
@@ -324,40 +342,14 @@ class ArticleParser:
             if not line:
                 continue
             
+            # Убираем маркеры
             line = re.sub(r'^ч\.\s*\d+\s*', '', line, flags=re.IGNORECASE)
             line = re.sub(r'^[а-яА-Я][).]\s*', '', line)
             line = re.sub(r'^[IVXLCDM]+[.．]\s*', '', line)
             line = re.sub(r'^\d+[.．)]\s*', '', line)
             line = re.sub(r'^[⭐★☆✨]+\s*', '', line)
             
-            if re.match(r'^\d+\s+[А-Яа-я]', line):
-                line = re.sub(r'^\d+\s+', '', line)
-            
-            cleaned.append(line)
-        
-        text = '\n'.join(cleaned)
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        return text.strip()
-    
-    @staticmethod
-    def _clean_part_text(text: str) -> str:
-        """Специальная очистка для текста части"""
-        if not text:
-            return ""
-        
-        lines = text.split('\n')
-        cleaned = []
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            line = re.sub(r'^ч\.\s*\d+\s*', '', line, flags=re.IGNORECASE)
-            line = re.sub(r'^[а-яА-Я][).]\s*', '', line)
-            line = re.sub(r'^[IVXLCDM]+[.．]\s*', '', line)
-            line = re.sub(r'^\d+[.．)]\s*', '', line)
-            line = re.sub(r'^[⭐★☆✨]+\s*', '', line)
-            
+            # Убираем цифры в начале
             if re.match(r'^\d+\s+[А-Яа-я]', line):
                 line = re.sub(r'^\d+\s+', '', line)
             
@@ -374,31 +366,25 @@ class ArticleParser:
             return ""
         
         text = re.sub(
-            r'(?:Наказание|Штраф|Санкция|Ответственность|Мера\s+наказания)\s*[:–-][^\n]*\n?',
+            r'(?:Наказание|Штраф|Санкция|Ответственность)\s*[:–-][^\n]*\n?',
             '',
             text,
             flags=re.IGNORECASE
         )
         
-        text = re.sub(r'^ч\.\s*\d+\s*', '', text, flags=re.IGNORECASE | re.MULTILINE)
-        text = re.sub(r'^[а-яА-Я][).]\s*', '', text, flags=re.MULTILINE)
-        text = re.sub(r'^[IVXLCDM]+[.．]\s*', '', text, flags=re.MULTILINE)
-        text = re.sub(r'^\d+[.．)]\s*', '', text, flags=re.MULTILINE)
-        text = re.sub(r'^[⭐★☆✨]+\s*', '', text, flags=re.MULTILINE)
-        
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text.strip()
     
-    # ================================================================
-    # 6. ИЗВЛЕЧЕНИЕ НАКАЗАНИЯ
-    # ================================================================
-    
     @staticmethod
-    def _extract_penalty_from_text(text: str) -> Optional[str]:
+    def _extract_penalty(text: str) -> Optional[str]:
         """Извлекает наказание из текста"""
+        if not text:
+            return None
+        
         patterns = [
-            r'(?:Наказание|Штраф|Санкция|Ответственность|Мера\s+наказания)\s*[:–-]\s*([^\n]+)',
-            r'(?:Наказание|Штраф|Санкция)\s*[:–-]\s*([^\n]+)',
+            r'(?:Наказание|Штраф|Санкция|Ответственность)\s*[:–-]\s*([^\n]+)',
+            r'Наказание:\s*([^\n]+)',
+            r'Штраф:\s*([^\n]+)',
         ]
         
         for pattern in patterns:
@@ -412,7 +398,7 @@ class ArticleParser:
         return None
     
     # ================================================================
-    # 7. РАЗБИВКА НА ЧАСТИ
+    # 6. РАЗБИВКА НА ЧАСТИ
     # ================================================================
     
     @staticmethod
@@ -433,8 +419,9 @@ class ArticleParser:
                     current_lines.append("")
                 continue
             
+            # Ищем маркер части
             match = re.match(
-                r"^(?:ч\.\s*(\d+)|(\d+)\s*[.)]|([а-яА-Я])\s*[).]|([IVXLCDM]+)\s*[.．]|(?:пункт|п\.)\s*(\d+))",
+                r"^(?:ч\.\s*(\d+)|(\d+)\s*[.)]|([а-яА-Я])\s*[).]|([IVXLCDM]+)\s*[.．])",
                 stripped,
                 re.IGNORECASE
             )
@@ -447,7 +434,6 @@ class ArticleParser:
                 num = match.group(2)
                 letter = match.group(3)
                 roman = match.group(4)
-                punkt = match.group(5)
                 
                 if ch:
                     current_marker = f"ч.{ch}"
@@ -470,11 +456,6 @@ class ArticleParser:
                     current_marker = roman
                     rest = stripped.replace(f"{roman}.", "", 1).strip()
                     current_lines = [rest] if rest else []
-                elif punkt:
-                    current_marker = f"п.{punkt}"
-                    rest = stripped.replace(f"п.{punkt}", "", 1).strip()
-                    rest = re.sub(r'^[.)]\s*', '', rest)
-                    current_lines = [rest] if rest else []
             else:
                 if current_marker is not None:
                     current_lines.append(stripped)
@@ -487,47 +468,8 @@ class ArticleParser:
         if current_marker is not None:
             parts.append((current_marker, "\n".join(current_lines).strip()))
         
+        # Если частей нет, но есть текст — возвращаем его как одну часть
         if not parts and body.strip():
-            clean = ArticleParser._remove_penalty_markers(body)
-            parts = [("", clean)]
+            parts = [("", body)]
         
         return parts
-    
-    # ================================================================
-    # 8. УДАЛЕНИЕ ДУБЛИКАТОВ
-    # ================================================================
-    
-    @staticmethod
-    def _remove_duplicates(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Удаляет дублирующиеся статьи"""
-        seen = set()
-        unique = []
-        
-        for article in articles:
-            key = f"{article.get('code', '')}|{article.get('title', '')}"
-            
-            if article.get('parts'):
-                for part in article['parts']:
-                    key += f"|{part.get('id', '')}|{part.get('text', '')[:50]}"
-            
-            if key not in seen:
-                seen.add(key)
-                unique.append(article)
-        
-        return unique
-    
-    # ================================================================
-    # 9. СОРТИРОВКА СТАТЕЙ
-    # ================================================================
-    
-    @staticmethod
-    def _sort_articles(articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Сортирует статьи по номеру"""
-        def sort_key(article):
-            code = article.get('code', '')
-            match = re.search(r'(\d+)', code)
-            if match:
-                return int(match.group(1))
-            return 9999
-        
-        return sorted(articles, key=sort_key)
