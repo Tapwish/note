@@ -19,18 +19,16 @@ class CodexParser:
             logger.info(f"  🌐 Загрузка: {url}")
             driver.get(url)
             
-            # Ждём загрузки страницы
             WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             
-            # Прокручиваем страницу для полной загрузки
+            # Прокручиваем для полной загрузки
             for _ in range(3):
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 import time
                 time.sleep(1)
             
-            # Возвращаемся в начало
             driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(1)
             
@@ -42,8 +40,8 @@ class CodexParser:
     
     def extract_text(self, html: str) -> str:
         """
-        Извлекает чистый текст из HTML кодекса
-        Универсальный метод, работает с любой структурой
+        Извлекает чистый текст из HTML
+        Универсальный метод — работает с любой структурой
         """
         if not html:
             return ""
@@ -57,29 +55,16 @@ class CodexParser:
             # 1. УДАЛЯЕМ НЕНУЖНЫЕ ЭЛЕМЕНТЫ
             # ============================================================
             
-            # Удаляем скрипты и стили
-            for script in soup(["script", "style", "noscript"]):
+            for script in soup(["script", "style", "noscript", "nav", "header", "footer", "aside"]):
                 script.decompose()
             
-            # Удаляем навигацию и шапку
-            for nav in soup.find_all(['nav', 'header', 'footer', 'aside']):
-                nav.decompose()
-            
-            # Удаляем элементы с классами, содержащими навигацию
-            for element in soup.find_all(class_=re.compile(r'(nav|menu|header|footer|sidebar|breadcrumb|pagination|reactions|share)', re.I)):
-                element.decompose()
-            
-            # Удаляем элементы с атрибутами роли навигации
-            for element in soup.find_all(role=re.compile(r'(nav|menu|banner|complementary)', re.I)):
-                element.decompose()
-            
             # ============================================================
-            # 2. ИЩЕМ ОСНОВНОЙ КОНТЕНТ (ПО ПРИОРИТЕТУ)
+            # 2. ИЩЕМ КОНТЕНТ — 7 СПОСОБОВ
             # ============================================================
             
             content = None
             
-            # ПРИОРИТЕТ 1: Ищем все сообщения (посты) на странице
+            # Способ 1: Ищем ВСЕ сообщения (посты)
             messages = soup.find_all('article', class_=re.compile(r'message', re.I))
             
             if messages:
@@ -91,32 +76,34 @@ class CodexParser:
                     if not msg_content:
                         msg_content = msg
                     
-                    text = msg_content.get_text(strip=True)
+                    text = msg_content.get_text(separator='\n', strip=True)
                     text_len = len(text)
                     
+                    # Проверяем наличие ключевых слов кодекса
                     has_codex = ('кодекс' in text.lower() or 
                                 'статья' in text.lower() or 
                                 'наказание' in text.lower() or
-                                'ч.' in text.lower())
+                                'глава' in text.lower() or
+                                'раздел' in text.lower())
                     
-                    weight = text_len * (2 if has_codex else 1)
+                    weight = text_len * (3 if has_codex else 1)
                     
                     if weight > best_length:
                         best_length = weight
-                        best_message = msg_content if msg_content else msg
+                        best_message = msg_content
                 
                 if best_message:
                     content = best_message
             
-            # ПРИОРИТЕТ 2: Ищем message-content напрямую
+            # Способ 2: message-content
             if not content:
                 content = soup.find('div', class_=re.compile(r'message-content', re.I))
             
-            # ПРИОРИТЕТ 3: Ищем bbWrapper
+            # Способ 3: bbWrapper
             if not content:
                 content = soup.find('div', class_=re.compile(r'bbWrapper', re.I))
             
-            # ПРИОРИТЕТ 4: Ищем любой div с большим количеством текста
+            # Способ 4: любой div с большим текстом
             if not content:
                 all_divs = soup.find_all('div')
                 best_div = None
@@ -129,7 +116,8 @@ class CodexParser:
                     
                     has_codex = ('кодекс' in text.lower() or 
                                 'статья' in text.lower() or 
-                                'наказание' in text.lower())
+                                'наказание' in text.lower() or
+                                'глава' in text.lower())
                     
                     weight = len(text) * (2 if has_codex else 1)
                     
@@ -140,37 +128,30 @@ class CodexParser:
                 if best_div:
                     content = best_div
             
-            # ПРИОРИТЕТ 5: Ищем div с классом, содержащим "content" или "body"
+            # Способ 5: body
             if not content:
-                for class_name in ['content', 'body', 'post', 'entry', 'article']:
-                    elem = soup.find('div', class_=re.compile(class_name, re.I))
-                    if elem and len(elem.get_text(strip=True)) > 1000:
-                        content = elem
-                        break
-            
-            # ПРИОРИТЕТ 6: Ищем основной div на странице
-            if not content:
-                body = soup.find('body')
-                if body:
-                    for child in body.find_all(recursive=False):
-                        if child.name == 'div' and len(child.get_text(strip=True)) > 500:
-                            content = child
-                            break
+                content = soup.find('body')
             
             if not content:
                 logger.error("  ❌ Не найден контейнер с текстом")
                 return ""
             
             # ============================================================
-            # 3. ИЗВЛЕКАЕМ И ОЧИЩАЕМ ТЕКСТ
+            # 3. ИЗВЛЕКАЕМ ТЕКСТ
             # ============================================================
             
             text = content.get_text(separator='\n', strip=True)
+            
+            # Очищаем
             text = self._clean_text(text)
             
+            # Проверяем, что это действительно кодекс
             if not self._is_codex_text(text):
-                logger.warning("  ⚠️ Извлечённый текст не содержит признаков кодекса")
-                return self._find_alternative_content(soup)
+                logger.warning("  ⚠️ Текст не похож на кодекс")
+                # Пробуем альтернативный метод
+                alt_text = self._find_alternative_content(soup)
+                if alt_text and len(alt_text) > len(text):
+                    text = alt_text
             
             logger.info(f"  ✅ Извлечено {len(text)} символов")
             return text
@@ -186,10 +167,14 @@ class CodexParser:
         if not text:
             return ""
         
+        # Убираем спецсимволы
         text = re.sub(r'[^\w\s\.\,\;\:\!\?\-\n\(\)\[\]\{\}\"\'\–\—]', ' ', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # Нормализуем
+        text = re.sub(r'\n{4,}', '\n\n', text)
         text = re.sub(r'[ \t]+', ' ', text)
         
+        # Убираем пустые строки
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         text = '\n'.join(lines)
         
@@ -200,7 +185,9 @@ class CodexParser:
         codex_keywords = [
             'кодекс', 'статья', 'наказание', 'ч.', 'ст.',
             'уголовный', 'административный', 'процессуальный', 'дорожный',
-            'преступление', 'правонарушение', 'штраф', 'лишение свободы'
+            'преступление', 'правонарушение', 'штраф', 'лишение свободы',
+            'глава', 'раздел', 'общая часть', 'особенная часть',
+            'водитель', 'пешеход', 'обгон', 'парковка', 'перекресток'
         ]
         
         text_lower = text.lower()
@@ -211,25 +198,17 @@ class CodexParser:
     def _find_alternative_content(self, soup) -> str:
         """Пытается найти альтернативный контент"""
         try:
-            all_elements = soup.find_all(['p', 'div', 'article', 'section'])
-            
             combined_text = []
-            for elem in all_elements:
+            
+            for elem in soup.find_all(['p', 'div', 'article', 'section']):
                 text = elem.get_text(strip=True)
-                if self._is_codex_text(text) and len(text) > 200:
+                if len(text) > 200 and self._is_codex_text(text):
                     combined_text.append(text)
             
             if combined_text:
                 result = '\n\n'.join(combined_text)
                 logger.info(f"  ✅ Найдено альтернативное содержимое: {len(result)} символов")
                 return result
-            
-            body = soup.find('body')
-            if body:
-                text = body.get_text(separator='\n', strip=True)
-                text = self._clean_text(text)
-                logger.info(f"  ⚠️ Использован весь текст body: {len(text)} символов")
-                return text
             
             return ""
             
