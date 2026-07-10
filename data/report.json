@@ -1,9 +1,9 @@
 {
-  "updatedAt": 1783677244193,
-  "servers_processed": 12,
-  "total_articles": 1159,
+  "updatedAt": 1783695046660,
+  "servers_processed": 18,
+  "total_articles": 2043,
   "errors": [],
-  "elapsedTime": 284.02,
+  "elapsedTime": 384.02,
   "servers": {
     "detroit": {
       "name": "Detroit",
@@ -66,18 +66,65 @@
       "codexes": {
         "uk": 20,
         "ak": 10,
-        "pk": 72
+        "pk": 72,
+        "dk": 63
       },
-      "total": 102
+      "total": 165
+    },
+    "las-vegas": {
+      "name": "Las Vegas",
+      "codexes": {
+        "uk": 5
+      },
+      "total": 5
+    },
+    "washington": {
+      "name": "Washington",
+      "codexes": {
+        "ak": 10,
+        "uk": 19,
+        "pk": 57,
+        "dk": 68
+      },
+      "total": 154
+    },
+    "dallas": {
+      "name": "Dallas",
+      "codexes": {
+        "pk": 16,
+        "dk": 28,
+        "ak": 1,
+        "uk": 1
+      },
+      "total": 46
+    },
+    "boston": {
+      "name": "Boston",
+      "codexes": {
+        "uk": 18,
+        "pk": 47,
+        "dk": 63
+      },
+      "total": 128
+    },
+    "houston": {
+      "name": "Houston",
+      "codexes": {
+        "uk": 18,
+        "dk": 63,
+        "pk": 48
+      },
+      "total": 129
     },
     "seattle": {
       "name": "Seattle",
       "codexes": {
+        "uk": 19,
         "ak": 8,
         "dk": 59,
         "pk": 66
       },
-      "total": 133
+      "total": 152
     },
     "phoenix": {
       "name": "Phoenix",
@@ -101,16 +148,29 @@
       "codexes": {
         "uk": 19,
         "ak": 14,
-        "pk": 70
+        "pk": 70,
+        "dk": 65
       },
-      "total": 103
+      "total": 168
+    },
+    "orlando": {
+      "name": "Orlando",
+      "codexes": {
+        "uk": 19,
+        "dk": 66,
+        "pk": 91,
+        "ak": 14
+      },
+      "total": 190
     },
     "memphis": {
       "name": "Memphis",
       "codexes": {
+        "dk": 66,
+        "uk": 19,
         "pk": 66
       },
-      "total": 66
+      "total": 151
     }
   }
 }
