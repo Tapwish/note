@@ -1,9 +1,9 @@
 {
-  "updatedAt": 1783669793358,
+  "updatedAt": 1783670831322,
   "servers_processed": 18,
   "total_articles": 2043,
   "errors": [],
-  "elapsedTime": 390.4,
+  "elapsedTime": 384.45,
   "servers": {
     "detroit": {
       "name": "Detroit",
