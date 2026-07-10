@@ -1,176 +1,176 @@
 {
-  "updatedAt": 1783668875211,
+  "updatedAt": 1783669793358,
   "servers_processed": 18,
-  "total_articles": 4271,
+  "total_articles": 2043,
   "errors": [],
-  "elapsedTime": 381.3,
+  "elapsedTime": 390.4,
   "servers": {
     "detroit": {
       "name": "Detroit",
       "codexes": {
-        "pk": 36,
+        "pk": 25,
         "ak": 3,
-        "uk": 16,
-        "dk": 83
+        "uk": 2,
+        "dk": 67
       },
-      "total": 138
+      "total": 97
     },
     "chicago": {
       "name": "Chicago",
       "codexes": {
-        "uk": 21,
-        "ak": 50,
-        "dk": 81,
-        "pk": 58
+        "uk": 3,
+        "ak": 5,
+        "dk": 67,
+        "pk": 12
       },
-      "total": 210
+      "total": 87
     },
     "san-francisco": {
       "name": "San Francisco",
       "codexes": {
-        "dk": 64
+        "dk": 63
       },
-      "total": 64
+      "total": 63
     },
     "atlanta": {
       "name": "Atlanta",
       "codexes": {
-        "pk": 6,
-        "ak": 16,
-        "dk": 15
+        "pk": 2,
+        "ak": 4,
+        "dk": 8
       },
-      "total": 37
+      "total": 14
     },
     "san-diego": {
       "name": "San Diego",
       "codexes": {
-        "pk": 75,
-        "ak": 75,
-        "uk": 155,
+        "pk": 70,
+        "ak": 14,
+        "uk": 19,
         "dk": 65
       },
-      "total": 370
+      "total": 168
     },
     "los-angeles": {
       "name": "Los Angeles",
       "codexes": {
-        "uk": 20,
-        "pk": 74,
-        "ak": 85,
-        "dk": 69
+        "uk": 4,
+        "pk": 13,
+        "ak": 11,
+        "dk": 66
       },
-      "total": 248
+      "total": 94
     },
     "miami": {
       "name": "Miami",
       "codexes": {
-        "uk": 150,
-        "ak": 46,
-        "pk": 75,
-        "dk": 73
+        "uk": 20,
+        "ak": 10,
+        "pk": 72,
+        "dk": 63
       },
-      "total": 344
+      "total": 165
     },
     "las-vegas": {
       "name": "Las Vegas",
       "codexes": {
-        "uk": 46
+        "uk": 5
       },
-      "total": 46
+      "total": 5
     },
     "washington": {
       "name": "Washington",
       "codexes": {
-        "ak": 45,
-        "uk": 142,
-        "pk": 61,
-        "dk": 70
+        "ak": 10,
+        "uk": 19,
+        "pk": 57,
+        "dk": 68
       },
-      "total": 318
+      "total": 154
     },
     "dallas": {
       "name": "Dallas",
       "codexes": {
-        "pk": 20,
-        "dk": 31,
-        "ak": 16,
-        "uk": 8
+        "pk": 16,
+        "dk": 28,
+        "ak": 1,
+        "uk": 1
       },
-      "total": 75
+      "total": 46
     },
     "boston": {
       "name": "Boston",
       "codexes": {
-        "uk": 165,
-        "pk": 67,
-        "dk": 67
+        "uk": 18,
+        "pk": 47,
+        "dk": 63
       },
-      "total": 299
+      "total": 128
     },
     "houston": {
       "name": "Houston",
       "codexes": {
-        "uk": 161,
-        "dk": 65,
-        "pk": 54
+        "uk": 18,
+        "dk": 63,
+        "pk": 48
       },
-      "total": 280
+      "total": 129
     },
     "seattle": {
       "name": "Seattle",
       "codexes": {
-        "uk": 129,
-        "ak": 62,
-        "dk": 71,
-        "pk": 69
+        "uk": 19,
+        "ak": 8,
+        "dk": 59,
+        "pk": 66
       },
-      "total": 331
+      "total": 152
     },
     "phoenix": {
       "name": "Phoenix",
       "codexes": {
-        "dk": 79
+        "dk": 63
       },
-      "total": 79
+      "total": 63
     },
     "denver": {
       "name": "Denver",
       "codexes": {
-        "uk": 154,
-        "pk": 78,
-        "dk": 67,
-        "ak": 72
+        "uk": 19,
+        "pk": 70,
+        "dk": 66,
+        "ak": 14
       },
-      "total": 371
+      "total": 169
     },
     "portland": {
       "name": "Portland",
       "codexes": {
-        "uk": 153,
-        "ak": 74,
-        "pk": 78,
-        "dk": 66
+        "uk": 19,
+        "ak": 14,
+        "pk": 70,
+        "dk": 65
       },
-      "total": 371
+      "total": 168
     },
     "orlando": {
       "name": "Orlando",
       "codexes": {
-        "uk": 153,
-        "dk": 67,
-        "pk": 98,
-        "ak": 76
+        "uk": 19,
+        "dk": 66,
+        "pk": 91,
+        "ak": 14
       },
-      "total": 394
+      "total": 190
     },
     "memphis": {
       "name": "Memphis",
       "codexes": {
-        "dk": 68,
-        "uk": 159,
-        "pk": 69
+        "dk": 66,
+        "uk": 19,
+        "pk": 66
       },
-      "total": 296
+      "total": 151
     }
   }
 }
