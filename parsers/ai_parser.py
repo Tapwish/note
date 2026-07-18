@@ -8,21 +8,18 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from utils.logger import logger
-
-# 🔥 Groq SDK
-from groq import Groq
+import requests
 
 
 class AIParser:
-    """Парсер с использованием Groq AI (бесплатно, ~1000 запросов/день)"""
+    """Парсер с использованием Groq AI (API напрямую)"""
 
     def __init__(self, driver, api_key: str, model: str = "llama-3.3-70b-versatile"):
         self.driver = driver
         self.api_key = api_key
         self.model = model
+        self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         
-        # Инициализируем клиент Groq
-        self.client = Groq(api_key=self.api_key)
         logger.info(f"🤖 Инициализирован Groq AI с моделью: {self.model}")
 
     def parse_codex(self, url: str, codex_type: str = "UK") -> Dict[str, Any]:
@@ -142,8 +139,14 @@ class AIParser:
         """
         
         try:
-            chat_completion = self.client.chat.completions.create(
-                messages=[
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": self.model,
+                "messages": [
                     {
                         "role": "system",
                         "content": "Ты - экспертный парсер законодательных текстов. Возвращай только валидный JSON."
@@ -153,43 +156,56 @@ class AIParser:
                         "content": prompt
                     }
                 ],
-                model=self.model,
-                temperature=0.1,
-                max_tokens=8000,
+                "temperature": 0.1,
+                "max_tokens": 8000
+            }
+            
+            response = requests.post(
+                self.api_url,
+                headers=headers,
+                json=payload,
+                timeout=120
             )
-
-            content = chat_completion.choices[0].message.content
-
-            # Извлекаем JSON
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-                # Проверяем структуру
-                if "sections" not in result:
-                    # Если AI не создал sections, оборачиваем
-                    if "articles" in result:
-                        result = {
-                            "name": codex_names.get(codex_type, "Кодекс"),
-                            "sections": [
-                                {
-                                    "number": "I",
-                                    "title": codex_names.get(codex_type, "Кодекс"),
-                                    "chapters": [
-                                        {
-                                            "number": "1",
-                                            "title": "Статьи",
-                                            "articles": result.get("articles", [])
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                logger.info(f"  ✅ AI распарсил {len(result.get('sections', []))} разделов")
-                return result
+            
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                
+                # Извлекаем JSON
+                json_match = re.search(r'\{.*\}', content, re.DOTALL)
+                if json_match:
+                    result = json.loads(json_match.group())
+                    # Проверяем структуру
+                    if "sections" not in result:
+                        if "articles" in result:
+                            result = {
+                                "name": codex_names.get(codex_type, "Кодекс"),
+                                "sections": [
+                                    {
+                                        "number": "I",
+                                        "title": codex_names.get(codex_type, "Кодекс"),
+                                        "chapters": [
+                                            {
+                                                "number": "1",
+                                                "title": "Статьи",
+                                                "articles": result.get("articles", [])
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                    logger.info(f"  ✅ AI распарсил {len(result.get('sections', []))} разделов")
+                    return result
+                else:
+                    logger.warning("  ⚠️ AI не вернул JSON")
+                    return None
             else:
-                logger.warning("  ⚠️ AI не вернул JSON")
+                logger.error(f"  ❌ API ошибка {response.status_code}: {response.text}")
                 return None
 
+        except requests.exceptions.Timeout:
+            logger.error("  ❌ Таймаут API")
+            return None
         except Exception as e:
             logger.error(f"  ❌ Ошибка Groq API: {str(e)}")
             return None
