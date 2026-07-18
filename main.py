@@ -13,6 +13,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
 
 from parsers.forum_parser import ForumParser
 from parsers.ai_parser import AIParser
@@ -69,6 +70,7 @@ class MajesticLawParser:
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         if os.environ.get("GITHUB_ACTIONS") == "true":
             from selenium.webdriver.chrome.service import Service as ChromeService
@@ -85,7 +87,7 @@ class MajesticLawParser:
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     # ================================================================
-    # 🔥 АВТОРИЗАЦИЯ НА ФОРУМЕ
+    # 🔥 АВТОРИЗАЦИЯ НА ФОРУМЕ (ИСПРАВЛЕННАЯ)
     # ================================================================
     
     def _login_to_forum(self):
@@ -119,12 +121,66 @@ class MajesticLawParser:
             password_field.send_keys(config.FORUM_PASSWORD)
             logger.info("  ✅ Пароль введен")
             
-            # 🔥 КНОПКА ВХОДА (текст "Войти")
-            login_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Войти')]"))
-            )
-            login_button.click()
-            logger.info("  ✅ Кнопка 'Войти' нажата")
+            # 🔥 КНОПКА ВХОДА - несколько вариантов
+            login_button = None
+            
+            # Вариант 1: кнопка с текстом "Войти"
+            try:
+                login_button = WebDriverWait(self.driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Войти')]"))
+                )
+                logger.info("  ✅ Кнопка найдена по тексту 'Войти'")
+            except:
+                pass
+            
+            # Вариант 2: кнопка с классом button--primary
+            if not login_button:
+                try:
+                    login_button = self.driver.find_element(By.XPATH, "//button[contains(@class, 'button--primary')]")
+                    logger.info("  ✅ Кнопка найдена по классу button--primary")
+                except:
+                    pass
+            
+            # Вариант 3: input с типом submit
+            if not login_button:
+                try:
+                    login_button = self.driver.find_element(By.XPATH, "//input[@type='submit']")
+                    logger.info("  ✅ Кнопка найдена как input[type='submit']")
+                except:
+                    pass
+            
+            # Вариант 4: любая кнопка внутри формы
+            if not login_button:
+                try:
+                    form = self.driver.find_element(By.XPATH, "//form[@action='/login/login']")
+                    login_button = form.find_element(By.XPATH, ".//button")
+                    logger.info("  ✅ Кнопка найдена внутри формы")
+                except:
+                    pass
+            
+            if login_button:
+                # 🔥 ПРОБУЕМ КЛИКНУТЬ ЧЕРЕЗ JavaScript
+                try:
+                    self.driver.execute_script("arguments[0].click();", login_button)
+                    logger.info("  ✅ Кнопка нажата (через JavaScript)")
+                except:
+                    try:
+                        login_button.click()
+                        logger.info("  ✅ Кнопка нажата (обычный клик)")
+                    except:
+                        # Пробуем через ActionChains
+                        actions = ActionChains(self.driver)
+                        actions.move_to_element(login_button).click().perform()
+                        logger.info("  ✅ Кнопка нажата (через ActionChains)")
+            else:
+                # 🔥 ПОСЛЕДНИЙ ВАРИАНТ: отправка формы через JavaScript
+                try:
+                    self.driver.execute_script("document.querySelector('form[action=\"/login/login\"]').submit();")
+                    logger.info("  ✅ Форма отправлена через JavaScript")
+                except Exception as e:
+                    logger.error(f"  ❌ Не удалось найти кнопку или отправить форму: {e}")
+                    self.driver.save_screenshot("login_error.png")
+                    sys.exit(1)
             
             # Ждем завершения авторизации
             time.sleep(5)
