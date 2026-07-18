@@ -84,7 +84,7 @@ class MajesticLawParser:
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     # ================================================================
-    # 🔥 АВТОРИЗАЦИЯ НА ФОРУМЕ
+    # 🔥 АВТОРИЗАЦИЯ НА ФОРУМЕ (ИСПРАВЛЕННАЯ)
     # ================================================================
     
     def _login_to_forum(self):
@@ -98,37 +98,49 @@ class MajesticLawParser:
             
             # Ждем загрузки страницы
             WebDriverWait(self.driver, 20).until(
-                EC.presence_of_element_located((By.NAME, "login"))
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             
-            # Вводим логин
-            login_field = self.driver.find_element(By.NAME, "login")
+            time.sleep(2)
+            
+            # 🔥 ПОЛЕ ЛОГИНА (name="login")
+            login_field = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "login"))
+            )
             login_field.clear()
             login_field.send_keys(config.FORUM_LOGIN)
+            logger.info("  ✅ Логин введен")
             
-            # Вводим пароль
+            # 🔥 ПОЛЕ ПАРОЛЯ (name="password")
             password_field = self.driver.find_element(By.NAME, "password")
             password_field.clear()
             password_field.send_keys(config.FORUM_PASSWORD)
+            logger.info("  ✅ Пароль введен")
             
-            # Нажимаем кнопку входа
-            login_button = self.driver.find_element(By.XPATH, "//input[@type='submit']")
+            # 🔥 КНОПКА ВХОДА (текст "Войти")
+            login_button = WebDriverWait(self.driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Войти')]"))
+            )
             login_button.click()
+            logger.info("  ✅ Кнопка 'Войти' нажата")
             
-            # Ждем завершения авторизации
-            time.sleep(3)
+            time.sleep(5)
             
-            # Проверяем, что авторизация прошла
+            # Проверяем результат
             if "login" in self.driver.current_url.lower():
-                logger.error("❌ Авторизация не удалась! Проверьте логин и пароль")
-                # Показываем HTML страницы для отладки
-                logger.debug(self.driver.page_source[:500])
+                logger.error("❌ Авторизация не удалась!")
+                self.driver.save_screenshot("login_error.png")
                 sys.exit(1)
             else:
                 logger.success("✅ Авторизация успешна!")
+                logger.info(f"  📍 Текущий URL: {self.driver.current_url}")
                 
         except Exception as e:
             logger.error(f"❌ Ошибка авторизации: {str(e)}")
+            try:
+                self.driver.save_screenshot("login_error.png")
+            except:
+                pass
             sys.exit(1)
     
     def _get_server_id(self, server_name: str) -> str:
@@ -145,7 +157,6 @@ class MajesticLawParser:
             logger.info(f"📡 Серверов: {len(config.SERVERS)}")
             start_time = time.time()
             
-            # Обрабатываем каждый сервер
             for idx, server in enumerate(config.SERVERS, 1):
                 logger.info(f"\n{'='*50}")
                 logger.info(f"📡 [{idx}/{len(config.SERVERS)}] {server.get('name', 'Unknown')}")
@@ -153,7 +164,6 @@ class MajesticLawParser:
                 self._process_server(server)
                 time.sleep(config.REQUEST_DELAY)
             
-            # Сохраняем все серверы
             self._save_all_servers()
             self._export_for_app()
             
@@ -177,14 +187,12 @@ class MajesticLawParser:
         server_id = self._get_server_id(server_name)
         
         try:
-            # 1. Находим ссылки на кодексы
             codex_links = self.forum_parser.find_codexes_in_section(section_url)
             
             if not codex_links:
                 logger.warning(f"  ⚠️ Кодексы не найдены")
                 return
             
-            # Данные для этого сервера
             server_data = {
                 'name': server_name,
                 'id': server_id,
@@ -194,7 +202,6 @@ class MajesticLawParser:
             
             server_articles = 0
             
-            # 2. Парсим каждый кодекс через AI
             for codex_type, codex_url in codex_links.items():
                 try:
                     parsed_data = self.forum_parser.parse_codex_page(codex_url, codex_type)
@@ -216,7 +223,6 @@ class MajesticLawParser:
                 except Exception as e:
                     logger.error(f"    ❌ Ошибка {codex_type}: {str(e)}")
             
-            # 3. Сохраняем данные сервера
             if server_articles > 0:
                 self.servers_data[server_id] = server_data
                 self.servers_processed += 1
