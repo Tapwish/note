@@ -10,6 +10,9 @@ from typing import Dict
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from parsers.forum_parser import ForumParser
 from parsers.ai_parser import AIParser
@@ -24,6 +27,12 @@ class MajesticLawParser:
             logger.error("❌ GROQ_API_KEY не найден!")
             sys.exit(1)
         
+        # Проверяем логин и пароль
+        if not config.FORUM_LOGIN or not config.FORUM_PASSWORD:
+            logger.error("❌ FORUM_LOGIN и FORUM_PASSWORD не найдены!")
+            logger.error("   Добавьте их в GitHub Secrets или в .env файл")
+            sys.exit(1)
+        
         # Создаём папки
         os.makedirs(config.DATA_DIR, exist_ok=True)
         os.makedirs(config.EXPORT_DIR, exist_ok=True)
@@ -32,13 +41,14 @@ class MajesticLawParser:
         # Настраиваем браузер
         self._setup_driver()
         
-        # 🔥 ИНИЦИАЛИЗИРУЕМ AI ПАРСЕР
+        # 🔥 АВТОРИЗУЕМСЯ НА ФОРУМЕ
+        self._login_to_forum()
+        
+        # Инициализируем парсеры
         self.ai_parser = AIParser(
             api_key=config.GROQ_API_KEY,
             model=config.GROQ_MODEL
         )
-        
-        # 🔥 ПЕРЕДАЕМ AI ПАРСЕР В FORUM PARSER
         self.forum_parser = ForumParser(self.driver, self.ai_parser)
         
         # Статистика
@@ -59,7 +69,6 @@ class MajesticLawParser:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
-        # В GitHub Actions используем системный chromedriver
         if os.environ.get("GITHUB_ACTIONS") == "true":
             from selenium.webdriver.chrome.service import Service as ChromeService
             service = ChromeService(executable_path="/usr/bin/chromedriver")
@@ -73,6 +82,54 @@ class MajesticLawParser:
             logger.info("✅ Selenium настроен локально")
         
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
+    # ================================================================
+    # 🔥 АВТОРИЗАЦИЯ НА ФОРУМЕ
+    # ================================================================
+    
+    def _login_to_forum(self):
+        """Авторизуется на форуме Majestic RP"""
+        logger.info("🔐 Авторизация на форуме...")
+        
+        try:
+            # Переходим на страницу входа
+            login_url = "https://forum.majestic-rp.ru/login"
+            self.driver.get(login_url)
+            
+            # Ждем загрузки страницы
+            WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located((By.NAME, "login"))
+            )
+            
+            # Вводим логин
+            login_field = self.driver.find_element(By.NAME, "login")
+            login_field.clear()
+            login_field.send_keys(config.FORUM_LOGIN)
+            
+            # Вводим пароль
+            password_field = self.driver.find_element(By.NAME, "password")
+            password_field.clear()
+            password_field.send_keys(config.FORUM_PASSWORD)
+            
+            # Нажимаем кнопку входа
+            login_button = self.driver.find_element(By.XPATH, "//input[@type='submit']")
+            login_button.click()
+            
+            # Ждем завершения авторизации
+            time.sleep(3)
+            
+            # Проверяем, что авторизация прошла
+            if "login" in self.driver.current_url.lower():
+                logger.error("❌ Авторизация не удалась! Проверьте логин и пароль")
+                # Показываем HTML страницы для отладки
+                logger.debug(self.driver.page_source[:500])
+                sys.exit(1)
+            else:
+                logger.success("✅ Авторизация успешна!")
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка авторизации: {str(e)}")
+            sys.exit(1)
     
     def _get_server_id(self, server_name: str) -> str:
         """Получает ID сервера по имени"""
@@ -140,7 +197,6 @@ class MajesticLawParser:
             # 2. Парсим каждый кодекс через AI
             for codex_type, codex_url in codex_links.items():
                 try:
-                    # 🔥 ЗАГРУЖАЕМ HTML И ПЕРЕДАЕМ В AI
                     parsed_data = self.forum_parser.parse_codex_page(codex_url, codex_type)
                     
                     if parsed_data and parsed_data.get('sections'):
