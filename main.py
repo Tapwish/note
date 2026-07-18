@@ -25,12 +25,13 @@ class MajesticLawParser:
         # Проверяем API ключ
         if not config.GROQ_API_KEY:
             logger.error("❌ GROQ_API_KEY не найден!")
+            logger.error("   Добавьте секрет GROQ_API_KEY в GitHub Actions")
             sys.exit(1)
         
         # Проверяем логин и пароль
         if not config.FORUM_LOGIN or not config.FORUM_PASSWORD:
             logger.error("❌ FORUM_LOGIN и FORUM_PASSWORD не найдены!")
-            logger.error("   Добавьте их в GitHub Secrets или в .env файл")
+            logger.error("   Добавьте секреты FORUM_LOGIN и FORUM_PASSWORD в GitHub Actions")
             sys.exit(1)
         
         # Создаём папки
@@ -84,7 +85,7 @@ class MajesticLawParser:
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     # ================================================================
-    # 🔥 АВТОРИЗАЦИЯ НА ФОРУМЕ (ИСПРАВЛЕННАЯ)
+    # 🔥 АВТОРИЗАЦИЯ НА ФОРУМЕ
     # ================================================================
     
     def _login_to_forum(self):
@@ -101,6 +102,7 @@ class MajesticLawParser:
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             
+            # Небольшая пауза для загрузки JS
             time.sleep(2)
             
             # 🔥 ПОЛЕ ЛОГИНА (name="login")
@@ -124,11 +126,13 @@ class MajesticLawParser:
             login_button.click()
             logger.info("  ✅ Кнопка 'Войти' нажата")
             
+            # Ждем завершения авторизации
             time.sleep(5)
             
             # Проверяем результат
-            if "login" in self.driver.current_url.lower():
-                logger.error("❌ Авторизация не удалась!")
+            current_url = self.driver.current_url.lower()
+            if "login" in current_url:
+                logger.error("❌ Авторизация не удалась! Проверьте логин и пароль")
                 self.driver.save_screenshot("login_error.png")
                 sys.exit(1)
             else:
@@ -139,6 +143,7 @@ class MajesticLawParser:
             logger.error(f"❌ Ошибка авторизации: {str(e)}")
             try:
                 self.driver.save_screenshot("login_error.png")
+                logger.info("  📸 Скриншот сохранен как login_error.png")
             except:
                 pass
             sys.exit(1)
@@ -157,6 +162,7 @@ class MajesticLawParser:
             logger.info(f"📡 Серверов: {len(config.SERVERS)}")
             start_time = time.time()
             
+            # Обрабатываем каждый сервер
             for idx, server in enumerate(config.SERVERS, 1):
                 logger.info(f"\n{'='*50}")
                 logger.info(f"📡 [{idx}/{len(config.SERVERS)}] {server.get('name', 'Unknown')}")
@@ -164,6 +170,7 @@ class MajesticLawParser:
                 self._process_server(server)
                 time.sleep(config.REQUEST_DELAY)
             
+            # Сохраняем все серверы
             self._save_all_servers()
             self._export_for_app()
             
@@ -187,12 +194,14 @@ class MajesticLawParser:
         server_id = self._get_server_id(server_name)
         
         try:
+            # 1. Находим ссылки на кодексы
             codex_links = self.forum_parser.find_codexes_in_section(section_url)
             
             if not codex_links:
                 logger.warning(f"  ⚠️ Кодексы не найдены")
                 return
             
+            # Данные для этого сервера
             server_data = {
                 'name': server_name,
                 'id': server_id,
@@ -202,6 +211,7 @@ class MajesticLawParser:
             
             server_articles = 0
             
+            # 2. Парсим каждый кодекс через AI
             for codex_type, codex_url in codex_links.items():
                 try:
                     parsed_data = self.forum_parser.parse_codex_page(codex_url, codex_type)
@@ -209,6 +219,7 @@ class MajesticLawParser:
                     if parsed_data and parsed_data.get('sections'):
                         server_data['codexes'][codex_type.lower()] = parsed_data
                         
+                        # Считаем статьи
                         articles_count = 0
                         for section in parsed_data.get('sections', []):
                             for chapter in section.get('chapters', []):
@@ -223,6 +234,7 @@ class MajesticLawParser:
                 except Exception as e:
                     logger.error(f"    ❌ Ошибка {codex_type}: {str(e)}")
             
+            # 3. Сохраняем данные сервера
             if server_articles > 0:
                 self.servers_data[server_id] = server_data
                 self.servers_processed += 1
