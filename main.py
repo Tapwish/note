@@ -11,8 +11,7 @@ from typing import Dict, List
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
 
 from parsers.forum_parser import ForumParser
 from parsers.ai_parser import AIParser
@@ -62,11 +61,22 @@ class MajesticLawParser:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        # 🔥 ПРОВЕРЯЕМ: ЗАПУСК В GITHUB ACTIONS ИЛИ ЛОКАЛЬНО
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            # GitHub Actions — используем предустановленный ChromeDriver
+            from selenium.webdriver.chrome.service import Service as ChromeService
+            service = ChromeService(executable_path="/usr/bin/chromedriver")
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("✅ Selenium настроен для GitHub Actions (chromedriver из системы)")
+        else:
+            # Локальный запуск — используем webdriver-manager
+            from selenium.webdriver.chrome.service import Service
+            from webdriver_manager.chrome import ChromeDriverManager
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("✅ Selenium настроен локально (webdriver-manager)")
         
-        logger.info("✅ Selenium настроен")
+        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     def _get_server_id(self, server_name: str) -> str:
         """Получает ID сервера по имени"""
