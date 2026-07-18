@@ -4,13 +4,16 @@ import os
 from typing import List, Dict
 
 class Config:
-    # ================================================================
-    # БАЗОВЫЕ НАСТРОЙКИ
-    # ================================================================
     BASE_URL: str = "https://forum.majestic-rp.ru/"
     
     # ================================================================
-    # ВСЕ 19 СЕРВЕРОВ MAJESTIC RP
+    # 🔥 ДАННЫЕ ДЛЯ АВТОРИЗАЦИИ
+    # ================================================================
+    FORUM_LOGIN: str = os.environ.get("FORUM_LOGIN", "")  # Твой логин на форуме
+    FORUM_PASSWORD: str = os.environ.get("FORUM_PASSWORD", "")  # Твой пароль
+    
+    # ================================================================
+    # ВСЕ 19 СЕРВЕРОВ
     # ================================================================
     SERVERS: List[Dict[str, str]] = [
         {"name": "New York", "id": "new-york", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.84/"},
@@ -34,25 +37,21 @@ class Config:
         {"name": "Memphis", "id": "memphis", "url": "https://forum.majestic-rp.ru/forums/zakonodatel-naya-baza.1471/"}
     ]
     
-    # ================================================================
-    # AI НАСТРОЙКИ (GROQ)
-    # ================================================================
     GROQ_API_KEY: str = os.environ.get("GROQ_API_KEY", "")
     GROQ_MODEL: str = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
     
-    # ================================================================
-    # ПУТИ
-    # ================================================================
     DATA_DIR: str = "data/laws"
     EXPORT_DIR: str = "data/export"
     REPORT_FILE: str = "data/report.json"
     
-    # ================================================================
-    # НАСТРОЙКИ ПАРСЕРА
-    # ================================================================
     REQUEST_DELAY: float = 2.0
-    PAGE_LOAD_TIMEOUT: int = 30
-    MAX_RETRIES: int = 3
+    
+    CODEX_KEYWORDS: Dict[str, List[str]] = {
+        "UK": ["уголовный", "уголовный кодекс"],
+        "AK": ["административный", "административный кодекс"],
+        "PK": ["процессуальный", "процессуальный кодекс"],
+        "DK": ["дорожный", "дорожный кодекс"]
+    }
 
 
 config = Config()
