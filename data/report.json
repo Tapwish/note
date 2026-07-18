@@ -1,0 +1,21 @@
+{
+  "updatedAt": 1784399064805,
+  "servers_processed": 0,
+  "total_servers": 19,
+  "total_articles": 0,
+  "errors": [
+    "New York: кодексы не найдены",
+    "Detroit: кодексы не найдены",
+    "Chicago: кодексы не найдены",
+    "San Francisco: кодексы не найдены",
+    "Atlanta: кодексы не найдены",
+    "San Diego: кодексы не найдены",
+    "Los Angeles: кодексы не найдены",
+    "Miami: кодексы не найдены",
+    "Las Vegas: кодексы не найдены",
+    "Washington: кодексы не найдены"
+  ],
+  "elapsedTime": 55.31,
+  "ai_model": "llama-3.3-70b-versatile",
+  "servers": {}
+}
