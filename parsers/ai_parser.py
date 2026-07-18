@@ -2,88 +2,58 @@
 
 import json
 import re
-import time
 from typing import Dict, Any, Optional
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from utils.logger import logger
 import requests
 
 
 class AIParser:
-    """Парсер с использованием Groq AI (API напрямую)"""
+    """AI парсер, который принимает HTML и структурирует его в JSON"""
 
-    def __init__(self, driver, api_key: str, model: str = "llama-3.3-70b-versatile"):
-        self.driver = driver
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
         self.api_key = api_key
         self.model = model
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         
         logger.info(f"🤖 Инициализирован Groq AI с моделью: {self.model}")
 
-    def parse_codex(self, url: str, codex_type: str = "UK") -> Dict[str, Any]:
+    def parse_html_to_json(self, html: str, codex_type: str = "UK") -> Dict[str, Any]:
         """
-        Парсит кодекс через Groq AI
+        Принимает HTML-код страницы, отправляет в Groq AI для структурирования в JSON
         
         Args:
-            url: URL страницы с кодексом
+            html: HTML-код страницы кодекса
             codex_type: Тип кодекса (UK, AK, PK, DK)
         
         Returns:
-            Dict с данными кодекса в формате для приложения
+            Структурированный JSON с данными кодекса
         """
-        logger.info(f"  🤖 AI парсинг {codex_type}...")
+        logger.info(f"  🤖 Отправка HTML в AI для структурирования...")
         
-        try:
-            # Загружаем страницу
-            self.driver.get(url)
-            WebDriverWait(self.driver, 30).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            
-            # Прокручиваем для загрузки
-            for _ in range(3):
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(1)
-            
-            html = self.driver.page_source
-            
-            # Очищаем HTML
-            clean_html = self._clean_html(html)
-            
-            # Формируем запрос к AI
-            result = self._call_ai(clean_html, codex_type)
-            
-            if result:
-                return result
-            
+        if not html or len(html) < 1000:
+            logger.error("  ❌ HTML слишком короткий или пустой")
+            return {"sections": [], "error": "HTML too short"}
+        
+        # Ограничиваем длину HTML для AI
+        if len(html) > 50000:
+            html = html[:50000]
+            logger.info(f"  📄 HTML обрезан до 50000 символов")
+        
+        # Подготавливаем промпт для AI
+        prompt = self._build_prompt(html, codex_type)
+        
+        # Отправляем запрос к Groq
+        result = self._call_groq(prompt)
+        
+        if result:
+            logger.info(f"  ✅ AI успешно структурировал данные")
+            return result
+        else:
+            logger.error("  ❌ AI не смог структурировать данные")
             return {"sections": [], "error": "AI parsing failed"}
-            
-        except Exception as e:
-            logger.error(f"  ❌ Ошибка AI: {str(e)}")
-            return {"sections": [], "error": str(e)}
     
-    def _clean_html(self, html: str) -> str:
-        """Очищает HTML от мусора"""
-        # Удаляем скрипты и стили
-        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL)
-        
-        # Удаляем теги, оставляем текст
-        html = re.sub(r'<[^>]+>', ' ', html)
-        
-        # Схлопываем пробелы
-        html = re.sub(r'\s+', ' ', html).strip()
-        
-        # Ограничиваем длину
-        if len(html) > 30000:
-            html = html[:30000]
-        
-        return html
-    
-    def _call_ai(self, text: str, codex_type: str) -> Optional[Dict]:
-        """Вызывает Groq API для парсинга"""
+    def _build_prompt(self, html: str, codex_type: str) -> str:
+        """Создает промпт для AI на основе HTML"""
         
         codex_names = {
             "UK": "Уголовный кодекс",
@@ -95,9 +65,12 @@ class AIParser:
         codex_name = codex_names.get(codex_type, "Кодекс")
         
         prompt = f"""
-        Ты - AI-парсер законодательных текстов. Извлеки структурированные данные из текста {codex_name}.
+        Ты - AI-парсер законодательных текстов. Проанализируй HTML-код страницы с {codex_name} и преобразуй его в структурированный JSON.
 
         ВЕРНИ ТОЛЬКО JSON БЕЗ ЛИШНЕГО ТЕКСТА.
+
+        HTML-код страницы:
+        {html}
 
         Формат JSON для приложения:
         {{
@@ -126,17 +99,23 @@ class AIParser:
         }}
 
         ПРАВИЛА:
-        1. Сохраняй структуру: sections → chapters → articles → parts
-        2. Каждая статья должна иметь id, title, parts
-        3. Если нет частей - parts: []
-        4. Группируй статьи по разделам и главам
-        5. Сохраняй полный текст без пропусков
-
-        Текст для парсинга:
-        {text[:20000]}
+        1. Найди в HTML все статьи кодекса
+        2. Определи структуру: разделы → главы → статьи → части
+        3. Каждая статья должна иметь id, title, parts
+        4. Если нет частей - parts: []
+        5. Группируй статьи по разделам и главам
+        6. Сохраняй полный текст без пропусков
+        7. Удали из текста всю лишнюю информацию (подписи, кнопки, навигацию)
+        8. Нумеруй разделы и главы римскими цифрами (I, II, III...)
+        9. Нумеруй статьи арабскими цифрами (1, 2, 3...)
 
         ВЕРНИ ТОЛЬКО JSON.
         """
+        
+        return prompt
+    
+    def _call_groq(self, prompt: str) -> Optional[Dict]:
+        """Отправляет запрос к Groq API"""
         
         try:
             headers = {
@@ -175,26 +154,6 @@ class AIParser:
                 json_match = re.search(r'\{.*\}', content, re.DOTALL)
                 if json_match:
                     result = json.loads(json_match.group())
-                    # Проверяем структуру
-                    if "sections" not in result:
-                        if "articles" in result:
-                            result = {
-                                "name": codex_names.get(codex_type, "Кодекс"),
-                                "sections": [
-                                    {
-                                        "number": "I",
-                                        "title": codex_names.get(codex_type, "Кодекс"),
-                                        "chapters": [
-                                            {
-                                                "number": "1",
-                                                "title": "Статьи",
-                                                "articles": result.get("articles", [])
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                    logger.info(f"  ✅ AI распарсил {len(result.get('sections', []))} разделов")
                     return result
                 else:
                     logger.warning("  ⚠️ AI не вернул JSON")
