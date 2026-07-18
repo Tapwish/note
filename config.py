@@ -7,10 +7,10 @@ class Config:
     BASE_URL: str = "https://forum.majestic-rp.ru/"
     
     # ================================================================
-    # 🔥 ДАННЫЕ ДЛЯ АВТОРИЗАЦИИ
+    # 🔥 ДАННЫЕ ДЛЯ АВТОРИЗАЦИИ (из секретов GitHub)
     # ================================================================
-    FORUM_LOGIN: str = os.environ.get("FORUM_LOGIN", "")  # Твой логин на форуме
-    FORUM_PASSWORD: str = os.environ.get("FORUM_PASSWORD", "")  # Твой пароль
+    FORUM_LOGIN: str = os.environ.get("FORUM_LOGIN", "")
+    FORUM_PASSWORD: str = os.environ.get("FORUM_PASSWORD", "")
     
     # ================================================================
     # ВСЕ 19 СЕРВЕРОВ
