@@ -5,13 +5,11 @@ import os
 import sys
 import time
 import json
-import re
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 
 from parsers.forum_parser import ForumParser
 from parsers.ai_parser import AIParser
@@ -24,7 +22,6 @@ class MajesticLawParser:
         # Проверяем API ключ
         if not config.GROQ_API_KEY:
             logger.error("❌ GROQ_API_KEY не найден!")
-            logger.error("   Добавьте секрет GROQ_API_KEY в GitHub Actions")
             sys.exit(1)
         
         # Создаём папки
@@ -35,13 +32,14 @@ class MajesticLawParser:
         # Настраиваем браузер
         self._setup_driver()
         
-        # Инициализируем парсеры
-        self.forum_parser = ForumParser(self.driver)
+        # 🔥 ИНИЦИАЛИЗИРУЕМ AI ПАРСЕР
         self.ai_parser = AIParser(
-            self.driver,
-            config.GROQ_API_KEY,
-            config.GROQ_MODEL
+            api_key=config.GROQ_API_KEY,
+            model=config.GROQ_MODEL
         )
+        
+        # 🔥 ПЕРЕДАЕМ AI ПАРСЕР В FORUM PARSER
+        self.forum_parser = ForumParser(self.driver, self.ai_parser)
         
         # Статистика
         self.servers_processed = 0
@@ -50,7 +48,7 @@ class MajesticLawParser:
         self.servers_data = {}
     
     def _setup_driver(self):
-        """Настраивает Selenium WebDriver для GitHub Actions"""
+        """Настраивает Selenium WebDriver"""
         chrome_options = Options()
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
@@ -61,20 +59,18 @@ class MajesticLawParser:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
-        # 🔥 ПРОВЕРЯЕМ: ЗАПУСК В GITHUB ACTIONS ИЛИ ЛОКАЛЬНО
+        # В GitHub Actions используем системный chromedriver
         if os.environ.get("GITHUB_ACTIONS") == "true":
-            # GitHub Actions — используем предустановленный ChromeDriver
             from selenium.webdriver.chrome.service import Service as ChromeService
             service = ChromeService(executable_path="/usr/bin/chromedriver")
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            logger.info("✅ Selenium настроен для GitHub Actions (chromedriver из системы)")
+            logger.info("✅ Selenium настроен для GitHub Actions")
         else:
-            # Локальный запуск — используем webdriver-manager
             from selenium.webdriver.chrome.service import Service
             from webdriver_manager.chrome import ChromeDriverManager
             service = Service(ChromeDriverManager().install())
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            logger.info("✅ Selenium настроен локально (webdriver-manager)")
+            logger.info("✅ Selenium настроен локально")
         
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
@@ -102,8 +98,6 @@ class MajesticLawParser:
             
             # Сохраняем все серверы
             self._save_all_servers()
-            
-            # 🔥 ЭКСПОРТ ДЛЯ ПРИЛОЖЕНИЯ
             self._export_for_app()
             
             elapsed_time = time.time() - start_time
@@ -111,11 +105,6 @@ class MajesticLawParser:
             
             logger.success(f"\n✅ Готово за {elapsed_time:.2f} сек")
             logger.success(f"✅ Серверов: {self.servers_processed}, статей: {self.total_articles}")
-            
-            if self.errors:
-                logger.warning(f"⚠️ Ошибок: {len(self.errors)}")
-                for err in self.errors[:5]:
-                    logger.warning(f"  - {err}")
             
         except Exception as e:
             logger.error(f"❌ Критическая ошибка: {str(e)}")
@@ -125,7 +114,7 @@ class MajesticLawParser:
             self.driver.quit()
     
     def _process_server(self, server: Dict[str, str]):
-        """Обрабатывает один сервер через AI"""
+        """Обрабатывает один сервер"""
         server_name = server.get('name', 'Unknown')
         section_url = server.get('url', '')
         server_id = self._get_server_id(server_name)
@@ -136,7 +125,6 @@ class MajesticLawParser:
             
             if not codex_links:
                 logger.warning(f"  ⚠️ Кодексы не найдены")
-                self.errors.append(f"{server_name}: кодексы не найдены")
                 return
             
             # Данные для этого сервера
@@ -152,12 +140,12 @@ class MajesticLawParser:
             # 2. Парсим каждый кодекс через AI
             for codex_type, codex_url in codex_links.items():
                 try:
-                    parsed_data = self.ai_parser.parse_codex(codex_url, codex_type)
+                    # 🔥 ЗАГРУЖАЕМ HTML И ПЕРЕДАЕМ В AI
+                    parsed_data = self.forum_parser.parse_codex_page(codex_url, codex_type)
                     
                     if parsed_data and parsed_data.get('sections'):
                         server_data['codexes'][codex_type.lower()] = parsed_data
                         
-                        # Считаем статьи
                         articles_count = 0
                         for section in parsed_data.get('sections', []):
                             for chapter in section.get('chapters', []):
@@ -168,24 +156,20 @@ class MajesticLawParser:
                         logger.success(f"    ✅ {articles_count} статей")
                     else:
                         logger.warning(f"    ⚠️ 0 статей")
-                        self.errors.append(f"{server_name}/{codex_type}: 0 статей")
                         
                 except Exception as e:
                     logger.error(f"    ❌ Ошибка {codex_type}: {str(e)}")
-                    self.errors.append(f"{server_name}/{codex_type}: {str(e)}")
             
             # 3. Сохраняем данные сервера
             if server_articles > 0:
                 self.servers_data[server_id] = server_data
                 self.servers_processed += 1
-                logger.success(f"\n✅ {server_name}: {server_articles} статей -> папка {server_id}")
+                logger.success(f"\n✅ {server_name}: {server_articles} статей")
             else:
-                logger.warning(f"\n⚠️ {server_name}: 0 статей, пропускаем")
-                self.errors.append(f"{server_name}: 0 статей")
+                logger.warning(f"\n⚠️ {server_name}: 0 статей")
                 
         except Exception as e:
             logger.error(f"❌ Ошибка {server_name}: {str(e)}")
-            self.errors.append(f"{server_name}: {str(e)}")
     
     def _save_all_servers(self):
         """Сохраняет каждый сервер в отдельную папку"""
@@ -206,147 +190,40 @@ class MajesticLawParser:
                 with open(filepath, 'w', encoding='utf-8') as f:
                     json.dump(codex_data, f, ensure_ascii=False, indent=2)
                 
-                # Считаем статьи
-                articles_count = 0
-                for section in codex_data.get('sections', []):
-                    for chapter in section.get('chapters', []):
-                        articles_count += len(chapter.get('articles', []))
-                
-                logger.info(f"  ✅ {codex_key.upper()}: {articles_count} статей -> {filename}")
-            
-            # Метаданные
-            meta_path = os.path.join(server_folder, '_meta.json')
-            meta = {
-                "name": server_data['name'],
-                "id": server_id,
-                "url": server_data['url'],
-                "codexes": list(server_data['codexes'].keys()),
-                "total_articles": sum(
-                    self._count_articles(data) for data in server_data['codexes'].values()
-                ),
-                "updatedAt": int(datetime.now().timestamp() * 1000)
-            }
-            with open(meta_path, 'w', encoding='utf-8') as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
-    
-    def _count_articles(self, data: dict) -> int:
-        """Подсчитывает количество статей в данных"""
-        count = 0
-        for section in data.get('sections', []):
-            for chapter in section.get('chapters', []):
-                count += len(chapter.get('articles', []))
-        return count
-    
-    # ================================================================
-    # 🔥 ЭКСПОРТ ДЛЯ ПРИЛОЖЕНИЯ
-    # ================================================================
+                logger.info(f"  ✅ {codex_key.upper()} сохранен")
     
     def _export_for_app(self):
-        """
-        Экспортирует данные в формате для приложения Book of Law
-        Каждый кодекс сохраняется в отдельный файл: uk.json, ak.json, pk.json, dk.json
-        """
-        logger.info("\n" + "="*50)
-        logger.info("📤 ЭКСПОРТ ДЛЯ ПРИЛОЖЕНИЯ")
-        logger.info("="*50)
+        """Экспортирует данные для приложения"""
+        logger.info("\n📤 ЭКСПОРТ ДЛЯ ПРИЛОЖЕНИЯ")
         
-        # Собираем данные со всех серверов
-        all_data = {
-            'uk': None,
-            'ak': None,
-            'pk': None,
-            'dk': None
-        }
-        
-        # Карта типов кодексов
-        codex_map = {
-            'uk': 'UK',
-            'ak': 'AK',
-            'pk': 'PK',
-            'dk': 'DK'
-        }
+        all_data = {'uk': [], 'ak': [], 'pk': [], 'dk': []}
         
         for server_id, server_data in self.servers_data.items():
-            server_name = server_data.get('name', server_id)
-            
             for codex_key, codex_data in server_data['codexes'].items():
                 app_key = codex_key.lower()
-                if app_key not in all_data:
-                    continue
-                
-                # Если данных для этого кодекса еще нет - создаем
-                if all_data[app_key] is None:
-                    all_data[app_key] = {
-                        "name": f"{codex_map.get(app_key, app_key.upper())} кодекс штата San-Andreas",
-                        "sections": []
-                    }
-                
-                # Добавляем секцию для сервера
-                section = {
-                    "number": str(len(all_data[app_key]['sections']) + 1),
-                    "title": f"{server_name}",
-                    "chapters": [
-                        {
-                            "number": "1",
-                            "title": f"Статьи {server_name}",
-                            "articles": []
-                        }
-                    ]
-                }
-                
-                # Копируем статьи
-                for orig_section in codex_data.get('sections', []):
-                    for chapter in orig_section.get('chapters', []):
-                        for article in chapter.get('articles', []):
-                            section['chapters'][0]['articles'].append(article)
-                
-                all_data[app_key]['sections'].append(section)
+                if app_key in all_data:
+                    all_data[app_key].append({
+                        "server": server_data['name'],
+                        "data": codex_data
+                    })
         
-        # Сохраняем каждый кодекс в отдельный файл
-        for codex_key, data in all_data.items():
-            if data is None or not data.get('sections'):
-                logger.warning(f"⚠️ Нет данных для {codex_key.upper()}")
-                continue
-            
-            filename = f"{codex_key}.json"
-            filepath = os.path.join(config.EXPORT_DIR, filename)
-            
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            
-            total_articles = 0
-            for section in data.get('sections', []):
-                for chapter in section.get('chapters', []):
-                    total_articles += len(chapter.get('articles', []))
-            
-            logger.info(f"  ✅ {filename} — {total_articles} статей, {len(data['sections'])} серверов")
-        
-        logger.info(f"📤 Экспорт завершен! Файлы в {config.EXPORT_DIR}")
+        for key, data in all_data.items():
+            if data:
+                filename = f"{key}.json"
+                filepath = os.path.join(config.EXPORT_DIR, filename)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                logger.info(f"  ✅ {filename} — {len(data)} серверов")
     
     def _create_report(self, elapsed_time: float):
-        """Создаёт общий отчёт"""
+        """Создаёт отчёт"""
         report = {
             "updatedAt": int(datetime.now().timestamp() * 1000),
             "servers_processed": self.servers_processed,
-            "total_servers": len(config.SERVERS),
             "total_articles": self.total_articles,
-            "errors": self.errors[:10],
             "elapsedTime": round(elapsed_time, 2),
-            "ai_model": config.GROQ_MODEL,
-            "servers": {}
+            "ai_model": config.GROQ_MODEL
         }
-        
-        for server_id, server_data in self.servers_data.items():
-            report["servers"][server_id] = {
-                "name": server_data['name'],
-                "codexes": {
-                    key.upper(): self._count_articles(data)
-                    for key, data in server_data['codexes'].items()
-                },
-                "total": sum(
-                    self._count_articles(data) for data in server_data['codexes'].values()
-                )
-            }
         
         with open(config.REPORT_FILE, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
